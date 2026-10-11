@@ -9,6 +9,7 @@ import {
   settingsModelKey,
   settingsModelPickerOptions,
   type SettingsModelChoice,
+  type SettingsSpecialModelChoice,
 } from "./settingsModelOptions";
 
 /**
@@ -35,6 +36,9 @@ export class SettingsModelPickerField extends LitElement {
   @property({ type: Boolean }) disabled = false;
   @property({ type: Boolean }) invalid = false;
   @property({ attribute: false }) onSelect?: (model: TierModelRef | undefined) => void;
+  @property({ attribute: false }) specialChoices: readonly SettingsSpecialModelChoice[] = [];
+  @property() selectedSpecialValue = "";
+  @property({ attribute: false }) onSelectSpecial?: (value: string) => void;
 
   @state() private pickerOpen = false;
 
@@ -44,22 +48,27 @@ export class SettingsModelPickerField extends LitElement {
 
   override render(): TemplateResult {
     const selected = this.selected;
+    const special = this.specialChoices.find(
+      (choice) => choice.value === this.selectedSpecialValue,
+    );
     const known = selected !== undefined && this.choices.some((choice) => sameModel(choice.model, selected));
-    const summary = selected === undefined
-      ? this.emptyLabel()
-      : `${describeSettingsModel(selected)}${known ? "" : " (unavailable)"}`;
+    const summary = special !== undefined
+      ? special.label
+      : selected === undefined
+        ? this.emptyLabel()
+        : `${describeSettingsModel(selected)}${known ? "" : " (unavailable)"}`;
 
     return html`
       <button
         type="button"
         id=${this.triggerId}
-        class="model-trigger ${selected === undefined ? "empty" : ""}"
+        class="model-trigger ${selected === undefined && special === undefined ? "empty" : ""}"
         aria-label=${this.accessibleLabel === "" ? nothing : this.accessibleLabel}
         aria-haspopup="dialog"
         aria-expanded=${String(this.pickerOpen)}
         aria-invalid=${String(this.invalid)}
         ?disabled=${this.disabled}
-        title=${this.triggerTitle(summary, known)}
+        title=${special === undefined ? this.triggerTitle(summary, known) : summary}
         @click=${() => {
           this.showPicker();
         }}
@@ -73,13 +82,19 @@ export class SettingsModelPickerField extends LitElement {
 
   private renderPicker(): TemplateResult {
     const selected = this.selected;
+    const special = this.specialChoices.find(
+      (choice) => choice.value === this.selectedSpecialValue,
+    );
     const options = settingsModelPickerOptions(
       this.choices,
       this.inheritedLabel === "" ? undefined : { label: this.inheritedLabel },
+      this.specialChoices,
     );
-    const selectedValue = selected === undefined
-      ? (this.inheritedLabel === "" ? undefined : INHERITED_SETTINGS_MODEL_VALUE)
-      : settingsModelKey(selected);
+    const selectedValue = special !== undefined
+      ? special.value
+      : selected === undefined
+        ? (this.inheritedLabel === "" ? undefined : INHERITED_SETTINGS_MODEL_VALUE)
+        : settingsModelKey(selected);
 
     /*
      * The settings dialog closes itself on Escape and on backdrop mousedown.
@@ -126,6 +141,12 @@ export class SettingsModelPickerField extends LitElement {
   }
 
   private pickModel(value: string): void {
+    const special = this.specialChoices.find((choice) => choice.value === value);
+    if (special !== undefined) {
+      this.closePicker();
+      this.onSelectSpecial?.(special.value);
+      return;
+    }
     if (value === INHERITED_SETTINGS_MODEL_VALUE) {
       if (this.inheritedLabel === "") return;
       this.closePicker();

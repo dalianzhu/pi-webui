@@ -5,6 +5,7 @@ import {
   settingsModelChoiceByKey,
   settingsModelKey,
   settingsModelPickerOptions,
+  type SettingsSpecialModelChoice,
 } from "./settingsModelOptions";
 import type { SettingsModelChoice } from "./settingsModelOptions";
 
@@ -92,6 +93,64 @@ describe("settingsModelPickerOptions", () => {
 
     const withoutInherited = settingsModelPickerOptions(choices);
     expect(withoutInherited.some((option) => option.value === INHERITED_SETTINGS_MODEL_VALUE)).toBe(false);
+  });
+
+  it("renders special choices before the inherited entry and the models", () => {
+    const choices: SettingsModelChoice[] = [
+      { model: { provider: "anthropic", id: "claude-opus" } },
+      { model: { provider: "openai", id: "gpt-5" } },
+    ];
+    const specialChoices: SettingsSpecialModelChoice[] = [
+      { value: "session", label: "Only use session model" },
+    ];
+
+    const options = settingsModelPickerOptions(choices, { label: "Inherited" }, specialChoices);
+
+    expect(options.map((option) => option.value)).toEqual([
+      "session",
+      INHERITED_SETTINGS_MODEL_VALUE,
+      settingsModelKey({ provider: "anthropic", id: "claude-opus" }),
+      settingsModelKey({ provider: "openai", id: "gpt-5" }),
+    ]);
+    expect(options.map((option) => option.group)).toEqual([
+      undefined,
+      undefined,
+      "anthropic",
+      "openai",
+    ]);
+  });
+
+  it("keeps today's order when no special choices are supplied", () => {
+    const choices: SettingsModelChoice[] = [
+      { model: { provider: "anthropic", id: "claude-opus" } },
+    ];
+
+    const withoutArgument = settingsModelPickerOptions(choices, { label: "Inherited" });
+    const withEmpty = settingsModelPickerOptions(choices, { label: "Inherited" }, []);
+
+    expect(withoutArgument.map((option) => option.value)).toEqual([
+      INHERITED_SETTINGS_MODEL_VALUE,
+      settingsModelKey({ provider: "anthropic", id: "claude-opus" }),
+    ]);
+    expect(withEmpty).toEqual(withoutArgument);
+  });
+
+  it("carries a special choice description only when one is set", () => {
+    const choices: SettingsModelChoice[] = [
+      { model: { provider: "anthropic", id: "claude-opus" } },
+    ];
+
+    const options = settingsModelPickerOptions(choices, undefined, [
+      { value: "session", label: "Only use session model", description: "Use the active session model" },
+      { value: "other", label: "Other" },
+    ]);
+
+    expect(options[0]).toEqual({
+      value: "session",
+      label: "Only use session model",
+      description: "Use the active session model",
+    });
+    expect(options[1]).toEqual({ value: "other", label: "Other" });
   });
 });
 

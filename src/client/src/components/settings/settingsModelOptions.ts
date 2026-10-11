@@ -32,6 +32,12 @@ export function settingsModelChoiceByKey<T extends SettingsModelChoice>(
   return choices.find((choice) => settingsModelKey(choice.model) === key);
 }
 
+export interface SettingsSpecialModelChoice {
+  readonly value: string;
+  readonly label: string;
+  readonly description?: string;
+}
+
 /**
  * Searchable, provider-grouped picker options for a machine's available models.
  *
@@ -39,10 +45,14 @@ export function settingsModelChoiceByKey<T extends SettingsModelChoice>(
  * contiguous header per provider. The model id is the label (the provider is
  * already the group header) and the display name becomes the secondary line, so
  * the picker's query matches ids, names, and the provider-qualified value.
+ *
+ * Special choices render first in caller order without a group, then the
+ * inherited entry, then the models.
  */
 export function settingsModelPickerOptions(
   choices: readonly SettingsModelChoice[],
   inherited?: { readonly label: string },
+  specialChoices?: readonly SettingsSpecialModelChoice[],
 ): CommandOption[] {
   const sorted = [...choices].sort((left, right) => (
     left.model.provider === right.model.provider
@@ -57,7 +67,13 @@ export function settingsModelPickerOptions(
       : { description: choice.name }),
     ...(choice.model.provider === "" ? {} : { group: choice.model.provider }),
   }));
-  return inherited === undefined
-    ? options
-    : [{ value: INHERITED_SETTINGS_MODEL_VALUE, label: inherited.label }, ...options];
+  const specialOptions = (specialChoices ?? []).map((choice) => ({
+    value: choice.value,
+    label: choice.label,
+    ...(choice.description === undefined ? {} : { description: choice.description }),
+  }));
+  const inheritedOptions = inherited === undefined
+    ? []
+    : [{ value: INHERITED_SETTINGS_MODEL_VALUE, label: inherited.label }];
+  return [...specialOptions, ...inheritedOptions, ...options];
 }

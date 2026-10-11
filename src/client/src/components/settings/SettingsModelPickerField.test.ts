@@ -215,6 +215,71 @@ describe("SettingsModelPickerField dialog", () => {
   });
 });
 
+describe("SettingsModelPickerField special choices", () => {
+  const specialChoices = [{ value: "session", label: "Only use session model" }];
+
+  it("replaces the empty/inherited summary for a selected special choice", async () => {
+    const field = await mountField((f) => {
+      f.choices = catalog;
+      f.inheritedLabel = INHERIT_LABEL;
+      f.specialChoices = specialChoices;
+      f.selectedSpecialValue = "session";
+    });
+
+    expect(triggerText(field)).toBe("Only use session model");
+    expect(triggerButton(field).classList.contains("empty")).toBe(false);
+  });
+
+  it("picks a special choice through onSelectSpecial and closes the dialog", async () => {
+    const onSelect = vi.fn<(model: TierModelRef | undefined) => void>();
+    const onSelectSpecial = vi.fn<(value: string) => void>();
+    const field = await mountField((f) => {
+      f.choices = catalog;
+      f.inheritedLabel = INHERIT_LABEL;
+      f.specialChoices = specialChoices;
+      f.selectedSpecialValue = "session";
+      f.onSelect = onSelect;
+      f.onSelectSpecial = onSelectSpecial;
+    });
+
+    await openPicker(field);
+    expect(pickerOptionLabels(field)).toEqual([
+      "Only use session model",
+      INHERIT_LABEL,
+      "claude-context",
+      "gpt-small",
+    ]);
+
+    await clickPickerOption(field, "Only use session model");
+
+    expect(onSelectSpecial).toHaveBeenCalledExactlyOnceWith("session");
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(field.isPickerOpen).toBe(false);
+  });
+
+  it("dispatches model and inherited selections through onSelect", async () => {
+    const onSelect = vi.fn<(model: TierModelRef | undefined) => void>();
+    const onSelectSpecial = vi.fn<(value: string) => void>();
+    const field = await mountField((f) => {
+      f.choices = catalog;
+      f.inheritedLabel = INHERIT_LABEL;
+      f.specialChoices = specialChoices;
+      f.selectedSpecialValue = "session";
+      f.onSelect = onSelect;
+      f.onSelectSpecial = onSelectSpecial;
+    });
+
+    await openPicker(field);
+    await clickPickerOption(field, "claude-context");
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith({ ...contextModel });
+
+    await openPicker(field);
+    await clickPickerOption(field, INHERIT_LABEL);
+    expect(onSelect).toHaveBeenLastCalledWith(undefined);
+    expect(onSelectSpecial).not.toHaveBeenCalled();
+  });
+});
+
 describe("SettingsModelPickerField event containment", () => {
   it("stops the picker's Escape keydown at the component boundary", async () => {
     const host = document.createElement("div");
