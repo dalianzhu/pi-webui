@@ -251,6 +251,14 @@ export class SessionController {
    */
   private extensionCursor: { sessionId: string; seq: number } | undefined;
   /**
+   * Ordering of applied extension reads, which is not the same fact as the event cursor.
+   *
+   * A branch can change inside Pi's asynchronous tree hooks without publishing an event, so two
+   * reads can carry the same `seq` while describing different branches. Only the read order can
+   * tell which of them a client has already superseded.
+   */
+  private extensionReadRevision: { sessionId: string; revision: number } | undefined;
+  /**
    * Extension entry events observed after the applied snapshot's cursor.
    *
    * The cursor says what a snapshot covered, not that the client holds a complete prefix: a
@@ -371,7 +379,6 @@ export class SessionController {
     // session must not cancel the in-flight upload indicator of the session
     // that is still sending; the per-session entry is cleared by send()'s
     // finally block when the request settles.
-    this.resetExtensionBaseline();
     this.setState({ selectedSession: undefined, messages: [], sessionExtensionEntries: [], messagePageStart: 0, messagePageEnd: 0, messagePageTotal: 0, isLoadingEarlierMessages: false, status: undefined, activity: undefined, availableThinkingLevels: [], ...this.clearSelectedModelPolicyState(), treeDialog: undefined });
   }
 
@@ -545,13 +552,18 @@ export class SessionController {
         return;
       }
       const refreshTarget: SelectedSessionRefreshTarget = { session, machineId, selectionSeq: seq };
-      const joinBuffer = new JoinEventCollector(this.maxJoinBufferedEvents);
+      let joinBuffer = new JoinEventCollector(this.maxJoinBufferedEvents);
       buffered = joinBuffer;
       this.socket.connect(
         session,
         (event) => { joinBuffer.push(event); },
         () => {
-          // A reconnect may land on a restarted daemon whose sequence numbers begin again.
+          // A reconnect may land on a restarted daemon whose sequence numbers begin again, and
+          // anything still buffered from the previous stream belongs to that stream. Replacing the
+          // collector drops those events instead of replaying them onto the new stream, which
+          // would let an old entry evict one the new daemon's window does contain.
+          joinBuffer = new JoinEventCollector(this.maxJoinBufferedEvents);
+          buffered = joinBuffer;
           this.resetExtensionBaseline();
           void this.refreshSelectedSession(session.id);
         },
@@ -1711,7 +1723,7 @@ export class SessionController {
           if (isLoadCancellation(error)) throw error;
           // A read that failed leaves the watermark untouched, so later entry events are applied
           // rather than being mistaken for already-included state.
-          return { entries: [], seq: undefined };
+          return { entries: [], seq: undefined, readRevision: undefined };
         }),
         this.notifications?.refreshSelectedSession(target.session, target.machineId) ?? Promise.resolve(),
       ]);
@@ -1745,38 +1757,35 @@ export class SessionController {
   /**
    * Apply an extension read: its entries, then the events observed after its cursor.
    *
-   * A snapshot older than events already applied is still applied, because it can carry entries
-   * the client never saw (a resync after a disconnect). Those events are replayed on top, so
-   * applying it fills gaps without rolling anything back. A read that failed reports no cursor
-   * and changes nothing.
+   * A read is applied even when events have moved past its cursor, because it can carry entries
+   * the client never saw (a resync after a disconnect); those events are replayed on top, so it
+   * fills gaps without rolling anything back.
+   *
+   * A read that another applied read has already superseded is ignored instead, ordered by the
+   * read's own revision: the newer read was the complete recent window at its moment, and the
+   * session branch is shared, so the older one has no standing to add back entries the newer one
+   * excluded. The event cursor cannot order reads, because a branch can change without moving it.
+   *
+   * A read that failed reports no cursor and changes nothing.
    */
   private applyExtensionSnapshot(
     sessionId: string,
-    response: { entries: SessionExtensionEntry[]; seq: number | undefined },
+    response: { entries: SessionExtensionEntry[]; seq: number | undefined; readRevision: number | undefined },
   ): { sessionExtensionEntries?: SessionExtensionEntry[] } {
     const seq = response.seq;
-    if (seq === undefined) return {};
-    const cursor = this.extensionCursor;
-    const sameSession = cursor?.sessionId === sessionId;
+    // A read that failed carries neither a cursor nor an ordering, and changes nothing.
+    if (seq === undefined || response.readRevision === undefined) return {};
+    const appliedRevision = this.extensionReadRevision;
+    if (appliedRevision?.sessionId === sessionId && response.readRevision < appliedRevision.revision) return {};
     const observed = this.extensionJournal?.sessionId === sessionId ? this.extensionJournal.events : [];
     const replay = observed
       .filter((event) => event.seq !== undefined && event.seq > seq)
       .sort((left, right) => (left.seq ?? 0) - (right.seq ?? 0));
 
     let entries = response.entries;
-    if (sameSession && seq < cursor.seq) {
-      // Two reads of the same session can overlap (a reconnect refreshes while the subscription
-      // barrier reads), so an older one can land last. Its entries are still worth applying, but
-      // entries learned from the newer read must survive it, or the newer state is rolled back.
-      // This only merges within one session; a branch change arrives as a newer read, which
-      // replaces the list instead of keeping entries that are no longer on the branch.
-      for (const entry of this.getState().sessionExtensionEntries) {
-        entries = mergeExtensionEntry(entries, entry);
-      }
-    }
     for (const event of replay) entries = mergeExtensionEntry(entries, event.entry);
-
-    this.extensionCursor = sameSession ? { sessionId, seq: Math.max(seq, cursor.seq) } : { sessionId, seq };
+    this.extensionCursor = { sessionId, seq };
+    this.extensionReadRevision = { sessionId, revision: response.readRevision };
     // Keep exactly the events this snapshot does not cover, so a later one can bring them forward.
     this.extensionJournal = { sessionId, events: replay };
     return { sessionExtensionEntries: entries };
@@ -1812,6 +1821,7 @@ export class SessionController {
    */
   private resetExtensionBaseline(): void {
     this.extensionCursor = undefined;
+    this.extensionReadRevision = undefined;
     this.extensionJournal = undefined;
     this.extensionStreamGeneration += 1;
   }

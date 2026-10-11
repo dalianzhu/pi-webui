@@ -51,8 +51,10 @@ describe("PiSessionService extension entries", () => {
       customEntry("task-plan", { revision: 1 }, "e1"),
     ];
     hub.setSeq("ext-session", 12);
+    const service = serviceWith(hub, "ext-session", branch);
 
-    const response = await serviceWith(hub, "ext-session", branch).extensionEntries(sessionRef("ext-session"));
+    const response = await service.extensionEntries(sessionRef("ext-session"));
+    await service.dispose();
 
     // The cursor comes from the same read as the entries; `stream-snapshot` is the precedent.
     expect(response).toEqual({
@@ -65,7 +67,63 @@ describe("PiSessionService extension entries", () => {
         },
       ],
       seq: 12,
+      readRevision: 1,
     });
+  });
+
+  // The event cursor orders events, not reads. A branch can change inside Pi's tree hooks without
+  // publishing anything, so a client needs this separate ordering to drop a superseded read.
+  it("orders reads independently of a standing event cursor", async () => {
+    const hub = new CapturingSessionEventHub();
+    hub.setSeq("ext-session", 7);
+    const service = serviceWith(hub, "ext-session", [customEntry("task-plan", { revision: 1 }, "e1")]);
+
+    const first = await service.extensionEntries(sessionRef("ext-session"));
+    const second = await service.extensionEntries(sessionRef("ext-session"));
+    await service.dispose();
+
+    expect(first.seq).toBe(second.seq);
+    expect(first.readRevision).toBe(1);
+    expect(second.readRevision).toBe(2);
+  });
+
+  // A stopped session is cold opened again while the browser keeps the same event socket, so the
+  // reads after a reopen must not look older than the reads before it. A per-runtime counter would
+  // restart and a client would reject them as superseded.
+  it("keeps read ordering monotonic across a stopped and reopened session", async () => {
+    const hub = new CapturingSessionEventHub();
+    const branches: unknown[][] = [
+      [],
+      [customEntry("task-plan", { revision: 1 }, "e1")],
+    ];
+    let createdRuntimes = 0;
+    const service = new PiSessionService(hub, {
+      agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
+      createAgentRuntime: () => {
+        const branch = branches[Math.min(createdRuntimes, branches.length - 1)] ?? [];
+        createdRuntimes += 1;
+        return Promise.resolve(
+          fakeRuntime("ext-session", {
+            sessionManager: fakeSessionManager("/workspace", { getBranch: () => branch }),
+          }).runtime,
+        );
+      },
+      sessionManager: sessionGateway([sessionRecord("ext-session")]),
+      heartbeatIntervalMs: 60_000,
+    });
+
+    const before = await service.extensionEntries(sessionRef("ext-session"));
+    expect(before.entries).toEqual([]);
+
+    await service.stop(sessionRef("ext-session"));
+    const after = await service.extensionEntries(sessionRef("ext-session"));
+    await service.dispose();
+
+    // The reopen really produced a new runtime, so the assertion below is not satisfied by reuse.
+    expect(createdRuntimes).toBe(2);
+    expect(after.entries.map((entry) => entry.entryId)).toEqual(["e1"]);
+    expect(after.readRevision).toBeGreaterThan(before.readRevision);
   });
 
   it("publishes an extension entry event when Pi reports one", async () => {
@@ -82,6 +140,7 @@ describe("PiSessionService extension entries", () => {
     });
 
     // Opening the session publishes its own events, so assert the entry event is among them.
+    await service.dispose();
     expect(hub.sessionEvents).toContainEqual({
       sessionId: "ext-session",
       event: {
@@ -103,6 +162,7 @@ describe("PiSessionService extension entries", () => {
     await service.status(sessionRef("ext-session"));
 
     listeners[0]?.({ type: "entry_appended", entry: { type: "label", id: "l1" } });
+    await service.dispose();
 
     expect(hub.sessionEvents).toContainEqual({
       sessionId: "ext-session",

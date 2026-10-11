@@ -10,31 +10,32 @@ describe("session extension entries parser", () => {
 
   it("accepts the service bound and rejects a longer list", () => {
     const atLimit = Array.from({ length: SESSION_EXTENSION_ENTRY_LIMIT }, (_value, index) => entry(`e${String(index)}`));
-    expect(parseSessionExtensionEntries({ entries: atLimit, seq: 3 }).entries).toHaveLength(SESSION_EXTENSION_ENTRY_LIMIT);
-    expect(() => parseSessionExtensionEntries({ entries: [...atLimit, entry("overflow")], seq: 3 })).toThrow(
+    expect(parseSessionExtensionEntries({ entries: atLimit, seq: 3 , readRevision: 3 }).entries).toHaveLength(SESSION_EXTENSION_ENTRY_LIMIT);
+    expect(() => parseSessionExtensionEntries({ entries: [...atLimit, entry("overflow")], seq: 3 , readRevision: 3 })).toThrow(
       /exceeds limit/,
     );
   });
 
   it("carries the read watermark", () => {
-    expect(parseSessionExtensionEntries({ entries: [], seq: 12 }).seq).toBe(12);
+    expect(parseSessionExtensionEntries({ entries: [], seq: 12 , readRevision: 12 }).seq).toBe(12);
     expect(() => parseSessionExtensionEntries({ entries: [] })).toThrow(/seq/);
     expect(() => parseSessionExtensionEntries({ entries: [], seq: -1 })).toThrow(/seq/);
   });
 
   it("reports an omitted payload as omitted, not as a payload", () => {
     expect(
-      parseSessionExtensionEntries({ entries: [{ customType: "task-plan", entryId: "e1", timestamp: "now", dataOmitted: true }], seq: 1 }),
-    ).toEqual({ entries: [{ customType: "task-plan", entryId: "e1", timestamp: "now", dataOmitted: true }], seq: 1 });
+      parseSessionExtensionEntries({ entries: [{ customType: "task-plan", entryId: "e1", timestamp: "now", dataOmitted: true }], seq: 1 , readRevision: 1 }),
+    ).toEqual({ entries: [{ customType: "task-plan", entryId: "e1", timestamp: "now", dataOmitted: true }], seq: 1 , readRevision: 1 });
 
     // An extension that wrote no payload is reported without data at all.
-    expect(parseSessionExtensionEntries({ entries: [{ customType: "task-plan", entryId: "e1", timestamp: "now" }], seq: 1 }).entries[0]).not.toHaveProperty("data");
+    expect(parseSessionExtensionEntries({ entries: [{ customType: "task-plan", entryId: "e1", timestamp: "now" }], seq: 1 , readRevision: 1 }).entries[0]).not.toHaveProperty("data");
   });
 
   it("lets the omission flag win over a payload that is also present", () => {
     const parsed = parseSessionExtensionEntries({
       entries: [{ customType: "task-plan", entryId: "e1", timestamp: "now", data: { revision: 1 }, dataOmitted: true }],
       seq: 1,
+      readRevision: 1,
     });
     expect(parsed.entries[0]).toEqual({ customType: "task-plan", entryId: "e1", timestamp: "now", dataOmitted: true });
   });
@@ -43,13 +44,19 @@ describe("session extension entries parser", () => {
     const parsed = parseSessionExtensionEntries({
       entries: [{ customType: "task-plan", entryId: "e1", timestamp: "now", data: undefined }],
       seq: 1,
+      readRevision: 1,
     });
     expect(parsed.entries[0]).not.toHaveProperty("data");
   });
 
+  it("requires the read ordering alongside the event cursor", () => {
+    expect(() => parseSessionExtensionEntries({ entries: [], seq: 1 })).toThrow(/readRevision/);
+    expect(parseSessionExtensionEntries({ entries: [], seq: 1, readRevision: 4 }).readRevision).toBe(4);
+  });
+
   it("rejects a non-custom payload and a blank custom type", () => {
-    expect(() => parseSessionExtensionEntries({ entries: [{ customType: "", entryId: "e1", timestamp: "now" }], seq: 1 })).toThrow(/customType/);
-    expect(() => parseSessionExtensionEntries({ entries: [{ entryId: "e1", timestamp: "now" }], seq: 1 })).toThrow(/customType/);
+    expect(() => parseSessionExtensionEntries({ entries: [{ customType: "", entryId: "e1", timestamp: "now" }], seq: 1 , readRevision: 1 })).toThrow(/customType/);
+    expect(() => parseSessionExtensionEntries({ entries: [{ entryId: "e1", timestamp: "now" }], seq: 1 , readRevision: 1 })).toThrow(/customType/);
   });
 });
 
