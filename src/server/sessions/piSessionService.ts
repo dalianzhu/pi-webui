@@ -2695,7 +2695,11 @@ export class PiSessionService implements SessionRouteService {
    */
   async extensionEntries(ref: PiSessionLookup): Promise<ClientSessionExtensionEntriesResponse> {
     const session = await this.getOrOpen(ref);
-    return { entries: sessionExtensionEntriesFromBranch(session.sessionManager.getBranch()) };
+    // Single consistent tick, like `streamSnapshot`: the watermark is read before the branch so
+    // an entry appended after it is published with a higher seq and is replayed by the client,
+    // while an entry already in the branch can only be replayed into an idempotent replacement.
+    const seq = this.events.currentSeq(session.sessionId);
+    return { entries: sessionExtensionEntriesFromBranch(session.sessionManager.getBranch()), seq };
   }
 
   /**

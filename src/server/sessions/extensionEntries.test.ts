@@ -33,7 +33,7 @@ describe("session extension entries", () => {
 
   it("ignores a custom entry without an extension identifier", () => {
     expect(sessionExtensionEntry({ type: "custom", id: "e1" })).toBeUndefined();
-    expect(sessionExtensionEntry({ type: "custom", customType: "   ", id: "e1" })).toBeUndefined();
+    expect(sessionExtensionEntry({ type: "custom", customType: 7, id: "e1" })).toBeUndefined();
   });
 
   it("reports an entry without data when the extension wrote none", () => {
@@ -54,6 +54,33 @@ describe("session extension entries", () => {
     const cyclic: Record<string, unknown> = {};
     cyclic["self"] = cyclic;
     expect(sessionExtensionEntry(customEntry("task-plan", cyclic))?.dataOmitted).toBe(true);
+  });
+
+  // JSON.stringify returns undefined for these, and the response is serialized the same way, so
+  // without the omission flag the payload would vanish and look like "the extension wrote none".
+  it("omits a payload JSON cannot represent at all", () => {
+    for (const payload of [() => undefined, Symbol("payload"), { toJSON: () => undefined }]) {
+      const entry = sessionExtensionEntry(customEntry("task-plan", payload));
+      expect(entry?.dataOmitted).toBe(true);
+      expect(entry && "data" in entry).toBe(false);
+    }
+  });
+
+  it("still reports a genuinely absent payload as absent rather than omitted", () => {
+    const entry = sessionExtensionEntry(customEntry("task-plan", undefined));
+    expect(entry?.dataOmitted).toBeUndefined();
+  });
+
+  // Pi stores customType verbatim, and it is the identity a plugin filters on, so PI WEBUI must
+  // not rename the writer.
+  it("forwards the writer's custom type verbatim", () => {
+    expect(sessionExtensionEntry(customEntry(" my-extension "))?.customType).toBe(" my-extension ");
+    expect(sessionExtensionEntry(customEntry("Task-Plan"))?.customType).toBe("Task-Plan");
+  });
+
+  it("treats only a custom type with no content as absent", () => {
+    expect(sessionExtensionEntry({ type: "custom", customType: "   ", id: "e1" })).toBeUndefined();
+    expect(sessionExtensionEntry({ type: "custom", customType: "\t", id: "e1" })).toBeUndefined();
   });
 
   it("collects only extension entries from a branch, oldest first", () => {

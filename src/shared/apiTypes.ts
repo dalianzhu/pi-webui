@@ -1744,9 +1744,9 @@ export interface SessionExtensionEntry {
   data?: unknown;
   /** Set when `data` exceeded the forwarding limit, so no payload is included. */
   dataOmitted?: true;
-  /** Session entry id, providing a stable identity for the entry. */
+  /** Session entry id. Pi always records one; a malformed entry without an id reports "". */
   entryId: string;
-  /** ISO timestamp recorded by Pi for the entry. */
+  /** ISO timestamp recorded by Pi for the entry, or "" for a malformed entry. */
   timestamp: string;
 }
 
@@ -1759,6 +1759,15 @@ export interface SessionExtensionEntriesResponse {
    * returned, and an entry whose payload exceeds the forwarding limit omits `data`.
    */
   entries: SessionExtensionEntry[];
+  /**
+   * Event-stream watermark captured in the same tick as `entries`.
+   *
+   * These entries are read from the session branch, not from the conversation transcript, so a
+   * client cannot tell from a transcript watermark whether an entry it just received is already
+   * included. With this cursor a client replays only extension events with `seq > seq` and drops
+   * the rest, which is what makes the read and the live stream agree.
+   */
+  seq: number;
 }
 
 /**

@@ -690,6 +690,7 @@ describe("session routes", () => {
       expect(response.statusCode).toBe(200);
       expect(response.json()).toEqual({
         entries: [{ customType: "task-plan", data: { revision: 2 }, entryId: "e1", timestamp: "2026-01-01T00:00:00.000Z" }],
+        seq: 7,
       });
       expect(routeService.extensionEntriesCalls).toEqual([{ id: "session-1", cwd: resolve("/repo") }]);
     } finally {
@@ -1469,9 +1470,9 @@ class CapturingRouteSessionService implements SessionRouteService {
     return Promise.resolve({ systemPrompt: "Use the project conventions." });
   }
 
-  extensionEntries(lookup: SessionRouteLookup): Promise<{ entries: SessionExtensionEntry[] }> {
+  extensionEntries(lookup: SessionRouteLookup): Promise<{ entries: SessionExtensionEntry[]; seq: number }> {
     this.extensionEntriesCalls.push(lookup);
-    return Promise.resolve({ entries: this.extensionEntriesResponse });
+    return Promise.resolve({ entries: this.extensionEntriesResponse, seq: 7 });
   }
 
   availableModels(): Promise<[]> { return Promise.resolve([]); }

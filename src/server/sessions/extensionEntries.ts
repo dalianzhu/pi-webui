@@ -22,17 +22,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-function serializedByteLength(value: unknown): number {
-  if (value === undefined) return 0;
+type PayloadSize = { kind: "ok"; bytes: number } | { kind: "unrepresentable" };
+
+function payloadSize(value: unknown): PayloadSize {
   try {
     // Typed as unknown on purpose: JSON.stringify is declared to return string, but it returns
     // undefined for inputs it cannot represent, such as a function or a symbol.
     const serialized: unknown = JSON.stringify(value);
-    return typeof serialized === "string" ? Buffer.byteLength(serialized, "utf8") : 0;
+    // The response is serialized the same way, so a value JSON cannot represent would silently
+    // lose its payload in transport. Report that as an omission rather than as "wrote nothing".
+    if (typeof serialized !== "string") return { kind: "unrepresentable" };
+    return { kind: "ok", bytes: Buffer.byteLength(serialized, "utf8") };
   } catch {
-    // A value an extension wrote may not be serializable, for example when it contains a cycle.
-    // Treat it as oversized so it is reported without a payload instead of failing the request.
-    return MAX_SESSION_EXTENSION_ENTRY_DATA_BYTES + 1;
+    // Cyclic structures throw instead of returning undefined.
+    return { kind: "unrepresentable" };
   }
 }
 
@@ -46,8 +49,11 @@ function serializedByteLength(value: unknown): number {
  */
 export function sessionExtensionEntry(entry: unknown): SessionExtensionEntry | undefined {
   if (!isRecord(entry) || entry["type"] !== "custom") return undefined;
-  const customType = typeof entry["customType"] === "string" ? entry["customType"].trim() : "";
-  if (customType === "") return undefined;
+  // Pi stores `customType` verbatim, so it is forwarded verbatim: it is the identity the writing
+  // extension filters on, and trimming it would rename the writer or merge two distinct ones.
+  // Only a value with no content at all is treated as absent.
+  const customType = typeof entry["customType"] === "string" ? entry["customType"] : "";
+  if (customType.trim() === "") return undefined;
 
   const normalized: SessionExtensionEntry = {
     customType,
@@ -60,7 +66,8 @@ export function sessionExtensionEntry(entry: unknown): SessionExtensionEntry | u
   // An extension that wrote no payload is reported the same way whether it omitted `data` or
   // set it to undefined, so readers never have to distinguish the two.
   if (data === undefined) return normalized;
-  if (serializedByteLength(data) > MAX_SESSION_EXTENSION_ENTRY_DATA_BYTES) {
+  const size = payloadSize(data);
+  if (size.kind === "unrepresentable" || size.bytes > MAX_SESSION_EXTENSION_ENTRY_DATA_BYTES) {
     return { ...normalized, dataOmitted: true };
   }
   return { ...normalized, data };

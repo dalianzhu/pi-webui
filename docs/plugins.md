@@ -1114,7 +1114,7 @@ export default {
 };
 ```
 
-The selected session's entries are on `state.sessionExtensionEntries`, oldest first:
+The selected session's entries are on `state.sessionExtensionEntries`, oldest first. This is the selected session's current branch. An archived selection loads history only and reports no entries, so an empty list there does not mean the session never wrote extension state:
 
 ```js
 import { html } from "lit";
@@ -1131,15 +1131,15 @@ Each entry provides:
 
 | Field | Meaning |
 | --- | --- |
-| `customType` | Identifier chosen by the writing extension, for example `task-plan`. Filter on this; other extensions' entries are interleaved. |
-| `data` | Opaque payload written by the extension. Absent when the extension wrote none, or when it was too large to forward. |
-| `dataOmitted` | `true` when the payload exceeded the host limit and was left out. The entry itself is still reported so identity and ordering stay intact. |
-| `entryId` | Session entry id, usable as a stable identity for the entry. |
-| `timestamp` | ISO timestamp recorded by Pi. |
+| `customType` | Identifier chosen by the writing extension, forwarded exactly as Pi stored it. Filter on this; other extensions' entries are interleaved. |
+| `data` | Opaque payload written by the extension. Absent when the extension wrote none, or when it could not be forwarded. |
+| `dataOmitted` | `true` when the payload was too large to forward, or when JSON cannot represent it (a function, a symbol, or a cycle). The entry itself is still reported so identity and ordering stay intact. |
+| `entryId` | Session entry id, usable as an identity for the entry. Pi always records one, but a malformed entry without an id is forwarded with an empty string, and such entries have no stable identity to deduplicate on. |
+| `timestamp` | ISO timestamp recorded by Pi, or an empty string for a malformed entry. |
 
 The list is bounded: only the most recent entries per session are forwarded. Treat it as a recent window over the extension's state, not as complete history, and read the extension's own latest entry to derive current state.
 
-Entries update as the extension writes them, so a panel or label re-renders without a page reload. Callback-based contributions such as workspace labels still return synchronously; build labels from this state through the same plugin-owned cache pattern used for other async reads.
+Entries update as the extension writes them, so a panel or label re-renders without a page reload. The state is refreshed when the subscription becomes live and on each session refresh, so a failed read leaves the previous state in place rather than clearing it. Callback-based contributions such as workspace labels still return synchronously; build labels from this state through the same plugin-owned cache pattern used for other async reads.
 
 ## Private and experimental PI WEBUI APIs
 

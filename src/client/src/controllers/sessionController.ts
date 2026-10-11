@@ -220,6 +220,14 @@ export class SessionController {
   private readonly onStarterModelPolicySubstitution: SessionControllerDependencies["onStarterModelPolicySubstitution"];
   private readonly refreshProjectSessionCatalog: NonNullable<SessionControllerDependencies["refreshProjectSessionCatalog"]>;
   private selectionSeq = 0;
+  /**
+   * Event-stream watermark the selected session's extension entries were read at.
+   *
+   * Extension entries come from their own read, so the transcript watermark says nothing about
+   * whether a given entry is already included. This cursor is what decides whether an entry
+   * event still has to be applied.
+   */
+  private extensionWatermark: { sessionId: string; seq: number } | undefined;
   private sessionReorderInFlight = false;
   private disposed = false;
   // Join-time stream watermark for the selected session. `seq` is the
@@ -318,11 +326,13 @@ export class SessionController {
     this.socket.close();
     this.notifications?.clearSelectedSession();
     this.streamWatermark = undefined;
+    this.extensionWatermark = undefined;
     this.clearPendingUpdates();
     // Note: sendingPrompts is intentionally NOT cleared here. Deselecting a
     // session must not cancel the in-flight upload indicator of the session
     // that is still sending; the per-session entry is cleared by send()'s
     // finally block when the request settles.
+    this.extensionWatermark = undefined;
     this.setState({ selectedSession: undefined, messages: [], sessionExtensionEntries: [], messagePageStart: 0, messagePageEnd: 0, messagePageTotal: 0, isLoadingEarlierMessages: false, status: undefined, activity: undefined, availableThinkingLevels: [], ...this.clearSelectedModelPolicyState(), treeDialog: undefined });
   }
 
@@ -464,6 +474,7 @@ export class SessionController {
     this.selectionLoad.restart();
     this.socket.close();
     this.streamWatermark = undefined;
+    this.extensionWatermark = undefined;
     this.clearPendingUpdates();
     const machineId = selectedMachineId(this.getState());
     this.notifications?.prepareSelectedSession(session, machineId);
@@ -502,7 +513,12 @@ export class SessionController {
         (event) => { joinBuffer.push(event); },
         () => { void this.refreshSelectedSession(session.id); },
         machineId,
-        () => { void this.notifications?.refreshSelectedSession(session, machineId); },
+        () => {
+          void this.notifications?.refreshSelectedSession(session, machineId);
+          // The subscription becomes live asynchronously, and the hub does not replay, so an
+          // entry written after the join read and before the subscription would never arrive.
+          void this.refreshSelectedExtensionEntries();
+        },
       );
       await this.requestSelectedSessionRefresh(refreshTarget);
       if (!this.isCurrentRefreshTarget(refreshTarget)) return;
@@ -1654,7 +1670,9 @@ export class SessionController {
         // rather than a failed session load.
         this.api.extensionEntries(target.session, target.machineId, signal).catch((error: unknown) => {
           if (isLoadCancellation(error)) throw error;
-          return { entries: [] };
+          // A read that failed leaves the watermark untouched, so later entry events are applied
+          // rather than being mistaken for already-included state.
+          return { entries: [], seq: undefined };
         }),
         this.notifications?.refreshSelectedSession(target.session, target.machineId) ?? Promise.resolve(),
       ]);
@@ -1668,15 +1686,60 @@ export class SessionController {
       const history = this.transcripts.mergeHistory(key, page);
       const messages = this.transcripts.seedStreamingPartial(history.messages, streamSnapshot.partial);
       this.streamWatermark = { sessionId: target.session.id, seq: streamSnapshot.seq };
+      // The extension snapshot is authoritative for its own list, so it replaces the entries and
+      // then any entry event observed while the read was in flight is replayed on top of it.
+      const extensionEntriesState = this.applyExtensionSnapshot(target.session.id, extensionEntries);
       this.setState({
         ...history,
         messages,
         status,
-        sessionExtensionEntries: extensionEntries.entries,
+        ...extensionEntriesState,
         activity: this.getState().sessionActivities[target.session.id],
       });
       this.applyStatus(status);
     });
+  }
+
+  /**
+   * Record an extension read as the authoritative entry list and watermark.
+   *
+   * A snapshot older than an entry event already applied would roll that entry back, so it is
+   * ignored. Refreshes are coalesced and scheduled, so an event can arrive before the read that
+   * was requested before it; comparing watermarks is what keeps the newer state.
+   *
+   * A read that failed reports no watermark and changes nothing.
+   */
+  private applyExtensionSnapshot(
+    sessionId: string,
+    response: { entries: SessionExtensionEntry[]; seq: number | undefined },
+  ): { sessionExtensionEntries?: SessionExtensionEntry[] } {
+    if (response.seq === undefined) return {};
+    const watermark = this.extensionWatermark;
+    if (watermark?.sessionId === sessionId && response.seq < watermark.seq) {
+      return {};
+    }
+    this.extensionWatermark = { sessionId, seq: response.seq };
+    return { sessionExtensionEntries: response.entries };
+  }
+
+  /**
+   * Re-read the selected session's extension entries.
+   *
+   * The event hub does not replay, and the join read can complete before the subscription is
+   * live, so entries written in that window would otherwise never reach the browser.
+   */
+  private async refreshSelectedExtensionEntries(): Promise<void> {
+    const session = this.getState().selectedSession;
+    if (session === undefined || session.archived === true || isClientPendingStartSessionInfo(session)) return;
+    const machineId = selectedMachineId(this.getState());
+    try {
+      const response = await this.api.extensionEntries(session, machineId, this.selectionLoad.signal);
+      if (!this.isSelectedSessionIdentity(session.id, machineId)) return;
+      this.setState(this.applyExtensionSnapshot(session.id, response));
+    } catch (error) {
+      // An older daemon has no `extension-entries` route; that is not a session failure.
+      if (isLoadCancellation(error)) return;
+    }
   }
 
   private isCurrentRefreshTarget(target: SelectedSessionRefreshTarget): boolean {
@@ -2039,6 +2102,20 @@ export class SessionController {
    * Entries are keyed by their session entry id, so an entry already seeded by the join read is
    * replaced rather than duplicated when its live event arrives.
    */
+  private applyExtensionEntryEvent(event: Extract<SessionUiEvent, { type: "session.extensionEntry" }>): void {
+    const selected = this.getState().selectedSession;
+    if (selected === undefined) return;
+    const watermark = this.extensionWatermark;
+    // An entry event the current read already covers is dropped: applying it would only append an
+    // entry the snapshot has already accounted for.
+    if (event.seq !== undefined && watermark?.sessionId === selected.id && event.seq <= watermark.seq) {
+      return;
+    }
+    this.applySessionExtensionEntry(event.entry);
+    // Events arrive in order, so applying one advances what this client is consistent with.
+    if (event.seq !== undefined) this.extensionWatermark = { sessionId: selected.id, seq: event.seq };
+  }
+
   private applySessionExtensionEntry(entry: SessionExtensionEntry) {
     const entries = this.getState().sessionExtensionEntries;
     // An entry the join read already contained is replaced in place, so a live event cannot
@@ -2086,6 +2163,13 @@ export class SessionController {
     }
     if (event.type === "command.output" && this.notifications?.shouldFilterLegacyNotification(selectedMachineId(this.getState()), event.notificationId) === true) return;
 
+    // Extension entries are read from their own snapshot, so the transcript watermark cannot say
+    // whether one of them is already included. They are matched against their own cursor.
+    if (event.type === "session.extensionEntry") {
+      this.applyExtensionEntryEvent(event);
+      return;
+    }
+
     // Drop events already reflected in the seeded join snapshot (committed
     // history + partial). Everything past the watermark applies exactly once,
     // so live content streams directly on top of the seeded partial.
@@ -2107,11 +2191,6 @@ export class SessionController {
     }
     if (isBufferedStreamEvent(event)) {
       this.queueTranscriptEvent(event);
-      return;
-    }
-
-    if (event.type === "session.extensionEntry") {
-      this.applySessionExtensionEntry(event.entry);
       return;
     }
 
