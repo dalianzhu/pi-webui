@@ -1,0 +1,100 @@
+digraph context_session_model_only {
+    rankdir=TB;
+    graph [label="context-session-model-only (epoch 1)", labelloc=t];
+    node [shape=box, style=rounded];
+
+    subgraph cluster_shared_config {
+        label="lane: shared-config";
+
+        T1 [label="T1: Shared Context sentinel types and config parsing\ntier: Standard\nplan task 1"];
+    }
+
+    subgraph cluster_server_resolver {
+        label="lane: server-resolver";
+
+        T2 [label="T2: Resolver session-only inspection\ntier: Standard\nplan task 2"];
+        T3 [label="T3: Session-only compaction early return\ntier: Advanced\nplan task 3"];
+    }
+
+    subgraph cluster_server_settings {
+        label="lane: server-settings";
+
+        T4 [label="T4: Utility model settings service contract v3\ntier: Standard\nplan task 4"];
+        T5 [label="T5: Explicit per-slot utility model route parsing\ntier: Standard\nplan task 5"];
+    }
+
+    subgraph cluster_client_api {
+        label="lane: client-api";
+
+        T6 [label="T6: Strict v3 utility-model settings parser\ntier: Standard\nplan task 6"];
+        T7 [label="T7: Version-aware save projection and dialog coverage\ntier: Standard\nplan task 7"];
+    }
+
+    subgraph cluster_client_draft {
+        label="lane: client-draft";
+
+        T8 [label="T8: Draft sentinel transitions and v2-or-later thinking capability\ntier: Standard\nplan task 8"];
+    }
+
+    subgraph cluster_client_picker {
+        label="lane: client-picker";
+
+        T9 [label="T9: Special picker choice ordering\ntier: Fast\nplan task 9"];
+        T10 [label="T10: Additive special-choice picker field\ntier: Standard\nplan task 10"];
+    }
+
+    subgraph cluster_client_panel {
+        label="lane: client-panel";
+
+        T11 [label="T11: Panel v3 Context choice, draft normalization, and thinking gates\ntier: Advanced\nplan task 11"];
+    }
+
+    subgraph cluster_docs_release {
+        label="lane: docs-release";
+
+        T12 [label="T12: Document the session-only Context mode and add the minor changeset\ntier: Fast\nplan task 12"];
+    }
+
+    subgraph cluster_integration {
+        label="lane: integration";
+
+        T13 [label="T13: Typecheck sweep, resolver-fake completion, and broad gates\ntier: Standard\nplan task 13"];
+    }
+
+    T1 -> T2 [label="depends_on"];
+    T1 -> T4 [label="depends_on"];
+    T1 -> T5 [label="depends_on"];
+    T1 -> T6 [label="depends_on"];
+    T1 -> T7 [label="depends_on"];
+    T1 -> T8 [label="depends_on"];
+    T1 -> T11 [label="depends_on"];
+    T1 -> T12 [label="depends_on"];
+    T1 -> T13 [label="depends_on"];
+    T2 -> T3 [label="depends_on"];
+    T2 -> T12 [label="depends_on"];
+    T2 -> T13 [label="depends_on"];
+    T3 -> T12 [label="depends_on"];
+    T3 -> T13 [label="depends_on"];
+    T4 -> T5 [label="depends_on"];
+    T4 -> T12 [label="depends_on"];
+    T4 -> T13 [label="depends_on"];
+    T5 -> T12 [label="depends_on"];
+    T5 -> T13 [label="depends_on"];
+    T6 -> T7 [label="depends_on"];
+    T6 -> T12 [label="depends_on"];
+    T6 -> T13 [label="depends_on"];
+    T7 -> T12 [label="depends_on"];
+    T7 -> T13 [label="depends_on"];
+    T8 -> T11 [label="depends_on"];
+    T8 -> T12 [label="depends_on"];
+    T8 -> T13 [label="depends_on"];
+    T9 -> T10 [label="depends_on"];
+    T9 -> T11 [label="depends_on"];
+    T9 -> T12 [label="depends_on"];
+    T9 -> T13 [label="depends_on"];
+    T10 -> T11 [label="depends_on"];
+    T10 -> T12 [label="depends_on"];
+    T10 -> T13 [label="depends_on"];
+    T11 -> T12 [label="depends_on"];
+    T11 -> T13 [label="depends_on"];
+}

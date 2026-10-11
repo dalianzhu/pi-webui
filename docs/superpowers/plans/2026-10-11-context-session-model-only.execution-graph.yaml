@@ -1,0 +1,717 @@
+schema_version: 1
+run_id: pm-20261010-214130-1c54f1ae
+epoch: 1
+source_plan:
+  path: docs/superpowers/plans/2026-10-11-context-session-model-only.md
+  sha256: eb97c8f8033bbcc0ae2e3686548101ce6025f0b436b1510c1ca8eb810e4348d6
+  commit_oid: 99cd28a2800b73c7dff6490bf0c73cfad4145453
+  task_numbers:
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    - 6
+    - 7
+    - 8
+    - 9
+    - 10
+    - 11
+    - 12
+    - 13
+  validator_exit: 0
+  validator_digest: eb97c8f8033bbcc0ae2e3686548101ce6025f0b436b1510c1ca8eb810e4348d6
+lanes:
+  - id: shared-config
+    task_ids:
+      - T1
+    sequences:
+      - 1
+  - id: server-resolver
+    task_ids:
+      - T2
+      - T3
+    sequences:
+      - 1
+      - 2
+  - id: server-settings
+    task_ids:
+      - T4
+      - T5
+    sequences:
+      - 1
+      - 2
+  - id: client-api
+    task_ids:
+      - T6
+      - T7
+    sequences:
+      - 1
+      - 2
+  - id: client-draft
+    task_ids:
+      - T8
+    sequences:
+      - 1
+  - id: client-picker
+    task_ids:
+      - T9
+      - T10
+    sequences:
+      - 1
+      - 2
+  - id: client-panel
+    task_ids:
+      - T11
+    sequences:
+      - 1
+  - id: docs-release
+    task_ids:
+      - T12
+    sequences:
+      - 1
+  - id: integration
+    task_ids:
+      - T13
+    sequences:
+      - 1
+tasks:
+  - id: T1
+    plan_task: 1
+    title: Shared Context sentinel types and config parsing
+    lane: shared-config
+    sequence: 1
+    implementer_tier: standard
+    depends_on: []
+    ownership:
+      - src/shared/apiTypes.ts
+      - src/config.ts
+      - src/config.test.ts
+    exclusive_resources: []
+    interfaces:
+      consumes: []
+      produces:
+        - name: utility-model-session-only-constant
+          signature: 'UTILITY_MODEL_SESSION_ONLY = "session" as const'
+          digest: 5cfe727e1b6f3d9e43ccb38fb5438691704407171d5103dd0d82863db408c368
+        - name: utility-model-session-only-type
+          signature: 'UtilityModelSessionOnly = typeof UTILITY_MODEL_SESSION_ONLY'
+          digest: 563d4eebfcef5c62a077aa0acb3abc199beda960f3f15779433e7bbfd889b778
+        - name: utility-model-context-setting
+          signature: 'UtilityModelContextSetting = UtilityModelBinding | UtilityModelSessionOnly'
+          digest: f94485fb893e3abda155c2befd8b5c2c3cb2ba374a4e4f88846edb5c764bb75f
+        - name: utility-model-settings-context
+          signature: 'UtilityModelSettings.context?: UtilityModelContextSetting'
+          digest: dc2f420631eeca3a10b0b586d50f2065231411eea329f9e82ca140448e747a9e
+        - name: utility-model-settings-update
+          signature: 'UtilityModelSettingsUpdate = { lightweight?: UtilityModelBinding | null; context?: UtilityModelContextSetting | null }'
+          digest: 097376ec7b43fc79a3ad76322582eeeaad62a4c81efad7efe0699bf29c418e5c
+        - name: utility-model-settings-response-v3
+          signature: 'UtilityModelSettingsResponseV3 extends UtilityModelSettingsResponseFields { contractVersion: 3; models: UtilityModelOptionV2[] }'
+          digest: ae61daa8313bac30edfdee8b4bafe8cdc0917c3a610f2b897fb4cd587412e00d
+        - name: utility-model-settings-response-union
+          signature: 'UtilityModelSettingsResponse = UtilityModelSettingsResponseV1 | UtilityModelSettingsResponseV2 | UtilityModelSettingsResponseV3'
+          digest: 81291614dbf155deef299e6ae9bf06e53f5395e6ccd80b87439aec6752dbec5d
+        - name: parse-utility-models-config-session-context
+          signature: 'parseUtilityModelsConfig(value: unknown, path: string): UtilityModelSettings accepts the sentinel for context and rejects it for lightweight'
+          digest: 0ce79ab7f1218dcc83906569e79050a25fbd073f2435b68c3789bcca9f75c7f6
+    validation:
+      - argv:
+          - npm
+          - test
+          - --
+          - --run
+          - src/config.test.ts
+        mutates_git: false
+      - argv:
+          - npx
+          - eslint
+          - src/shared/apiTypes.ts
+          - src/config.ts
+          - src/config.test.ts
+        mutates_git: false
+  - id: T2
+    plan_task: 2
+    title: Resolver session-only inspection
+    lane: server-resolver
+    sequence: 1
+    implementer_tier: standard
+    depends_on:
+      - T1
+    ownership:
+      - src/server/sessions/utilityModelResolver.ts
+      - src/server/sessions/utilityModelResolver.test.ts
+    exclusive_resources: []
+    interfaces:
+      consumes:
+        - interface: utility-model-session-only-constant
+          from: T1
+          digest: 5cfe727e1b6f3d9e43ccb38fb5438691704407171d5103dd0d82863db408c368
+        - interface: utility-model-context-setting
+          from: T1
+          digest: f94485fb893e3abda155c2befd8b5c2c3cb2ba374a4e4f88846edb5c764bb75f
+      produces:
+        - name: utility-model-inspection-session-model-only
+          signature: 'UtilityModelInspection<TModel> { candidates: readonly ResolvedUtilityModel<TModel>[]; sessionModelOnly: boolean; unavailable?: UtilityModelUnavailable }'
+          digest: 5c45897f564071c071b7854e38988468c0438d1c0ddb2838750564a510b75e0b
+        - name: utility-model-resolver-session-only-inspection
+          signature: 'createUtilityModelResolver(deps).inspect("context") returns { candidates: [], sessionModelOnly: true } with no unavailable key when utilityModels.context is the sentinel, and sessionModelOnly: false on every other return'
+          digest: b93585bd87d5315e4e930a71f085ef8ef60a79ebafe2033ed62b3dedaba2661b
+    validation:
+      - argv:
+          - npm
+          - test
+          - --
+          - --run
+          - src/server/sessions/utilityModelResolver.test.ts
+        mutates_git: false
+      - argv:
+          - npx
+          - eslint
+          - src/server/sessions/utilityModelResolver.ts
+          - src/server/sessions/utilityModelResolver.test.ts
+        mutates_git: false
+  - id: T3
+    plan_task: 3
+    title: Session-only compaction early return
+    lane: server-resolver
+    sequence: 2
+    implementer_tier: advanced
+    depends_on:
+      - T2
+    ownership:
+      - src/server/sessions/utilityModelExtension.ts
+      - src/server/sessions/utilityModelExtension.test.ts
+    exclusive_resources: []
+    interfaces:
+      consumes:
+        - interface: utility-model-inspection-session-model-only
+          from: T2
+          digest: 5c45897f564071c071b7854e38988468c0438d1c0ddb2838750564a510b75e0b
+        - interface: utility-model-resolver-session-only-inspection
+          from: T2
+          digest: b93585bd87d5315e4e930a71f085ef8ef60a79ebafe2033ed62b3dedaba2661b
+      produces:
+        - name: session-before-compact-session-only
+          signature: 'sessionBeforeCompact(event, ctx) returns undefined when ctx.model is undefined or inspection.sessionModelOnly is true, and otherwise behaves as before over inspection.candidates'
+          digest: 1f6ea053178761e9762159eef152d08c0adca81ad476f2e792fb4c9b63d5d6c4
+    validation:
+      - argv:
+          - npm
+          - test
+          - --
+          - --run
+          - src/server/sessions/utilityModelExtension.test.ts
+        mutates_git: false
+      - argv:
+          - npx
+          - eslint
+          - src/server/sessions/utilityModelExtension.ts
+          - src/server/sessions/utilityModelExtension.test.ts
+        mutates_git: false
+  - id: T4
+    plan_task: 4
+    title: Utility model settings service contract v3
+    lane: server-settings
+    sequence: 1
+    implementer_tier: standard
+    depends_on:
+      - T1
+    ownership:
+      - src/server/sessions/utilityModelSettingsService.ts
+      - src/server/sessions/utilityModelSettingsService.test.ts
+    exclusive_resources: []
+    interfaces:
+      consumes:
+        - interface: utility-model-session-only-constant
+          from: T1
+          digest: 5cfe727e1b6f3d9e43ccb38fb5438691704407171d5103dd0d82863db408c368
+        - interface: utility-model-settings-response-v3
+          from: T1
+          digest: ae61daa8313bac30edfdee8b4bafe8cdc0917c3a610f2b897fb4cd587412e00d
+      produces:
+        - name: utility-model-settings-service-v3
+          signature: 'UtilityModelSettingsService { inspect(): Promise<UtilityModelSettingsResponseV3>; update(patch: UtilityModelSettingsUpdate): Promise<UtilityModelSettingsResponseV3> }'
+          digest: 799234d494700e2af7e73fb131d254cc76dd16cd84aaa25af2309c137e65083a
+        - name: utility-model-settings-validation-sentinel
+          signature: 'validationFor("context", settings, models) returns { valid: true } for settings.context === UTILITY_MODEL_SESSION_ONLY without reading the catalog'
+          digest: 83e9ca961619f3d1745200e447ce5d1cb78f717240fda24d2ae71e85d8e0e2da
+    validation:
+      - argv:
+          - npm
+          - test
+          - --
+          - --run
+          - src/server/sessions/utilityModelSettingsService.test.ts
+        mutates_git: false
+      - argv:
+          - npx
+          - eslint
+          - src/server/sessions/utilityModelSettingsService.ts
+          - src/server/sessions/utilityModelSettingsService.test.ts
+        mutates_git: false
+  - id: T5
+    plan_task: 5
+    title: Explicit per-slot utility model route parsing
+    lane: server-settings
+    sequence: 2
+    implementer_tier: standard
+    depends_on:
+      - T1
+      - T4
+    ownership:
+      - src/server/sessions/utilityModelSettingsRoutes.ts
+      - src/server/sessions/utilityModelSettingsRoutes.test.ts
+    exclusive_resources: []
+    interfaces:
+      consumes:
+        - interface: utility-model-session-only-constant
+          from: T1
+          digest: 5cfe727e1b6f3d9e43ccb38fb5438691704407171d5103dd0d82863db408c368
+        - interface: utility-model-settings-update
+          from: T1
+          digest: 097376ec7b43fc79a3ad76322582eeeaad62a4c81efad7efe0699bf29c418e5c
+        - interface: utility-model-settings-response-v3
+          from: T1
+          digest: ae61daa8313bac30edfdee8b4bafe8cdc0917c3a610f2b897fb4cd587412e00d
+        - interface: parse-utility-models-config-session-context
+          from: T1
+          digest: 0ce79ab7f1218dcc83906569e79050a25fbd073f2435b68c3789bcca9f75c7f6
+        - interface: utility-model-settings-service-v3
+          from: T4
+          digest: 799234d494700e2af7e73fb131d254cc76dd16cd84aaa25af2309c137e65083a
+      produces:
+        - name: parse-settings-update-sentinel
+          signature: 'parseSettingsUpdate(value: unknown): UtilityModelSettingsUpdate accepts { context: "session" }, { context: null }, binding objects, and { lightweight: null }; rejects lightweight: "session" and every non-sentinel Context string'
+          digest: 97ed09943f87286a5d1aca02edf1c31142ebd1a0e3f71b786c9fb104b2d07942
+    validation:
+      - argv:
+          - npm
+          - test
+          - --
+          - --run
+          - src/server/sessions/utilityModelSettingsRoutes.test.ts
+        mutates_git: false
+      - argv:
+          - npx
+          - eslint
+          - src/server/sessions/utilityModelSettingsRoutes.ts
+          - src/server/sessions/utilityModelSettingsRoutes.test.ts
+        mutates_git: false
+  - id: T6
+    plan_task: 6
+    title: Strict v3 utility-model settings parser
+    lane: client-api
+    sequence: 1
+    implementer_tier: standard
+    depends_on:
+      - T1
+    ownership:
+      - src/client/src/api/parsers.ts
+      - src/client/src/api/parsers.test.ts
+    exclusive_resources: []
+    interfaces:
+      consumes:
+        - interface: utility-model-session-only-constant
+          from: T1
+          digest: 5cfe727e1b6f3d9e43ccb38fb5438691704407171d5103dd0d82863db408c368
+        - interface: utility-model-settings-response-v3
+          from: T1
+          digest: ae61daa8313bac30edfdee8b4bafe8cdc0917c3a610f2b897fb4cd587412e00d
+      produces:
+        - name: parse-utility-model-settings-response-v3
+          signature: 'parseUtilityModelSettingsResponse(value: unknown): UtilityModelSettingsResponse dispatches contractVersion 1, 2, and 3 and throws Invalid utility model settings contract version otherwise; V3 context accepts exactly the sentinel or a binding'
+          digest: 39058a18fb2fc7751347a04b532581c36fe93e6c206612b1a41e16db745e99fc
+    validation:
+      - argv:
+          - npm
+          - test
+          - --
+          - --run
+          - src/client/src/api/parsers.test.ts
+        mutates_git: false
+      - argv:
+          - npx
+          - eslint
+          - src/client/src/api/parsers.ts
+          - src/client/src/api/parsers.test.ts
+        mutates_git: false
+  - id: T7
+    plan_task: 7
+    title: Version-aware save projection and dialog coverage
+    lane: client-api
+    sequence: 2
+    implementer_tier: standard
+    depends_on:
+      - T1
+      - T6
+    ownership:
+      - src/client/src/api/clients.ts
+      - src/client/src/api/clients.test.ts
+      - src/client/src/components/SettingsDialog.utilitymodels.test.ts
+    exclusive_resources: []
+    interfaces:
+      consumes:
+        - interface: utility-model-session-only-constant
+          from: T1
+          digest: 5cfe727e1b6f3d9e43ccb38fb5438691704407171d5103dd0d82863db408c368
+        - interface: parse-utility-model-settings-response-v3
+          from: T6
+          digest: 39058a18fb2fc7751347a04b532581c36fe93e6c206612b1a41e16db745e99fc
+      produces:
+        - name: utility-model-settings-save-projection
+          signature: 'utilityModelsApi.save(settings, contractVersion, machineId) sends { settings: update } for v2 and v3, projects own v1 properties to { provider, id } while keeping null, and throws Cannot save the session-only Context model to a contract version 1 runtime before any request'
+          digest: c281b6e0fccfb2dd7bbe72fdc4e9aa8306adedee9e636606e8a8e86bc732912b
+    validation:
+      - argv:
+          - npm
+          - test
+          - --
+          - --run
+          - src/client/src/api/clients.test.ts
+          - src/client/src/components/SettingsDialog.utilitymodels.test.ts
+        mutates_git: false
+      - argv:
+          - npx
+          - eslint
+          - src/client/src/api/clients.ts
+          - src/client/src/api/clients.test.ts
+          - src/client/src/components/SettingsDialog.utilitymodels.test.ts
+        mutates_git: false
+  - id: T8
+    plan_task: 8
+    title: Draft sentinel transitions and v2-or-later thinking capability
+    lane: client-draft
+    sequence: 1
+    implementer_tier: standard
+    depends_on:
+      - T1
+    ownership:
+      - src/client/src/components/settings/utilityModelSettingsDraft.ts
+      - src/client/src/components/settings/utilityModelSettingsDraft.test.ts
+    exclusive_resources: []
+    interfaces:
+      consumes:
+        - interface: utility-model-session-only-constant
+          from: T1
+          digest: 5cfe727e1b6f3d9e43ccb38fb5438691704407171d5103dd0d82863db408c368
+        - interface: utility-model-context-setting
+          from: T1
+          digest: f94485fb893e3abda155c2befd8b5c2c3cb2ba374a4e4f88846edb5c764bb75f
+        - interface: utility-model-session-only-type
+          from: T1
+          digest: 563d4eebfcef5c62a077aa0acb3abc199beda960f3f15779433e7bbfd889b778
+        - interface: utility-model-settings-response-v3
+          from: T1
+          digest: ae61daa8313bac30edfdee8b4bafe8cdc0917c3a610f2b897fb4cd587412e00d
+        - interface: utility-model-settings-response-union
+          from: T1
+          digest: 81291614dbf155deef299e6ae9bf06e53f5395e6ccd80b87439aec6752dbec5d
+      produces:
+        - name: supports-utility-model-thinking
+          signature: 'supportsUtilityModelThinking(response: UtilityModelSettingsResponse): response is UtilityModelSettingsResponseV2 | UtilityModelSettingsResponseV3'
+          digest: 6432ad8a0f02f0323733e7752a4d1e710696b72207ab1bada97d387c9e12aedf
+        - name: update-utility-model-draft-context-session-only
+          signature: 'updateUtilityModelDraftContextSessionOnly(draft: UtilityModelSettingsDraft): UtilityModelSettingsDraft'
+          digest: 3b99181bbdc2723c46128870e547b795764df93fd5dbf13836834db6be67db36
+        - name: utility-model-draft-sentinel-transitions
+          signature: 'updateUtilityModelDraftThinkingLevel returns an equal clone for the sentinel; utilityModelSettingsUpdateFromDraft emits the sentinel; validateUtilityModelSlot accepts the sentinel and validates v3 explicit levels exactly as v2'
+          digest: 2ee2df7454f0e68d972600ae855c38c521102da32448a9797f544431992d9df2
+    validation:
+      - argv:
+          - npm
+          - test
+          - --
+          - --run
+          - src/client/src/components/settings/utilityModelSettingsDraft.test.ts
+        mutates_git: false
+      - argv:
+          - npx
+          - eslint
+          - src/client/src/components/settings/utilityModelSettingsDraft.ts
+          - src/client/src/components/settings/utilityModelSettingsDraft.test.ts
+        mutates_git: false
+  - id: T9
+    plan_task: 9
+    title: Special picker choice ordering
+    lane: client-picker
+    sequence: 1
+    implementer_tier: fast
+    depends_on: []
+    ownership:
+      - src/client/src/components/settings/settingsModelOptions.ts
+      - src/client/src/components/settings/settingsModelOptions.test.ts
+    exclusive_resources: []
+    interfaces:
+      consumes: []
+      produces:
+        - name: settings-special-model-choice
+          signature: 'interface SettingsSpecialModelChoice { readonly value: string; readonly label: string; readonly description?: string }'
+          digest: 69f6bcaeaf34bfb41261c9ad1f5bde1b530bbe30df35ddaee0631b80c5a2bfcc
+        - name: settings-model-picker-options-special-first
+          signature: 'settingsModelPickerOptions(choices, inherited?, specialChoices?) returns special choices first in caller order without a group, then the inherited entry, then provider-sorted models'
+          digest: ff101b48f333fa4d8faeafe7f6b8b2d50ab22a8689d7c77eebf77a2d2ddef5be
+    validation:
+      - argv:
+          - npm
+          - test
+          - --
+          - --run
+          - src/client/src/components/settings/settingsModelOptions.test.ts
+        mutates_git: false
+      - argv:
+          - npx
+          - eslint
+          - src/client/src/components/settings/settingsModelOptions.ts
+          - src/client/src/components/settings/settingsModelOptions.test.ts
+        mutates_git: false
+  - id: T10
+    plan_task: 10
+    title: Additive special-choice picker field
+    lane: client-picker
+    sequence: 2
+    implementer_tier: standard
+    depends_on:
+      - T9
+    ownership:
+      - src/client/src/components/settings/SettingsModelPickerField.ts
+      - src/client/src/components/settings/SettingsModelPickerField.test.ts
+    exclusive_resources: []
+    interfaces:
+      consumes:
+        - interface: settings-special-model-choice
+          from: T9
+          digest: 69f6bcaeaf34bfb41261c9ad1f5bde1b530bbe30df35ddaee0631b80c5a2bfcc
+        - interface: settings-model-picker-options-special-first
+          from: T9
+          digest: ff101b48f333fa4d8faeafe7f6b8b2d50ab22a8689d7c77eebf77a2d2ddef5be
+      produces:
+        - name: settings-model-picker-field-special-choice
+          signature: 'SettingsModelPickerField gains specialChoices, selectedSpecialValue, and onSelectSpecial so a selected special choice shows its label as the trigger summary and picking it calls onSelectSpecial without calling onSelect'
+          digest: 15385d412f09a358745780c73140859423d392a72ca33f6f2dd9686565543a88
+    validation:
+      - argv:
+          - npm
+          - test
+          - --
+          - --run
+          - src/client/src/components/settings/SettingsModelPickerField.test.ts
+        mutates_git: false
+      - argv:
+          - npx
+          - eslint
+          - src/client/src/components/settings/SettingsModelPickerField.ts
+          - src/client/src/components/settings/SettingsModelPickerField.test.ts
+        mutates_git: false
+  - id: T11
+    plan_task: 11
+    title: Panel v3 Context choice, draft normalization, and thinking gates
+    lane: client-panel
+    sequence: 1
+    implementer_tier: advanced
+    depends_on:
+      - T1
+      - T8
+      - T9
+      - T10
+    ownership:
+      - src/client/src/components/settings/SettingsUtilityModelsPanel.ts
+      - src/client/src/components/settings/SettingsUtilityModelsPanel.test.ts
+    exclusive_resources: []
+    interfaces:
+      consumes:
+        - interface: utility-model-session-only-constant
+          from: T1
+          digest: 5cfe727e1b6f3d9e43ccb38fb5438691704407171d5103dd0d82863db408c368
+        - interface: supports-utility-model-thinking
+          from: T8
+          digest: 6432ad8a0f02f0323733e7752a4d1e710696b72207ab1bada97d387c9e12aedf
+        - interface: update-utility-model-draft-context-session-only
+          from: T8
+          digest: 3b99181bbdc2723c46128870e547b795764df93fd5dbf13836834db6be67db36
+        - interface: utility-model-draft-sentinel-transitions
+          from: T8
+          digest: 2ee2df7454f0e68d972600ae855c38c521102da32448a9797f544431992d9df2
+        - interface: settings-special-model-choice
+          from: T9
+          digest: 69f6bcaeaf34bfb41261c9ad1f5bde1b530bbe30df35ddaee0631b80c5a2bfcc
+        - interface: settings-model-picker-field-special-choice
+          from: T10
+          digest: 15385d412f09a358745780c73140859423d392a72ca33f6f2dd9686565543a88
+      produces:
+        - name: settings-utility-models-panel-session-only-choice
+          signature: 'renderFieldRow(slot) offers the special choice only for a v3 Context row, normalizes a sentinel draft to undefined for binding lookups while validating the raw draft, gates thinking by supportsUtilityModelThinking, and onSpecialPicked installs the sentinel'
+          digest: b13179c1898c245b65a5771d49524820e5190e089dfe317d4ff16e782d7b4bfa
+    validation:
+      - argv:
+          - npm
+          - test
+          - --
+          - --run
+          - src/client/src/components/settings/SettingsUtilityModelsPanel.test.ts
+        mutates_git: false
+      - argv:
+          - npx
+          - eslint
+          - src/client/src/components/settings/SettingsUtilityModelsPanel.ts
+          - src/client/src/components/settings/SettingsUtilityModelsPanel.test.ts
+        mutates_git: false
+  - id: T12
+    plan_task: 12
+    title: Document the session-only Context mode and add the minor changeset
+    lane: docs-release
+    sequence: 1
+    implementer_tier: fast
+    depends_on:
+      - T1
+      - T2
+      - T3
+      - T4
+      - T5
+      - T6
+      - T7
+      - T8
+      - T9
+      - T10
+      - T11
+    ownership:
+      - docs/config.md
+      - docs/config.html
+      - .changeset/context-session-model-only.md
+    exclusive_resources: []
+    interfaces:
+      consumes:
+        - interface: parse-utility-models-config-session-context
+          from: T1
+          digest: 0ce79ab7f1218dcc83906569e79050a25fbd073f2435b68c3789bcca9f75c7f6
+        - interface: utility-model-inspection-session-model-only
+          from: T2
+          digest: 5c45897f564071c071b7854e38988468c0438d1c0ddb2838750564a510b75e0b
+        - interface: session-before-compact-session-only
+          from: T3
+          digest: 1f6ea053178761e9762159eef152d08c0adca81ad476f2e792fb4c9b63d5d6c4
+        - interface: utility-model-settings-service-v3
+          from: T4
+          digest: 799234d494700e2af7e73fb131d254cc76dd16cd84aaa25af2309c137e65083a
+        - interface: parse-settings-update-sentinel
+          from: T5
+          digest: 97ed09943f87286a5d1aca02edf1c31142ebd1a0e3f71b786c9fb104b2d07942
+        - interface: parse-utility-model-settings-response-v3
+          from: T6
+          digest: 39058a18fb2fc7751347a04b532581c36fe93e6c206612b1a41e16db745e99fc
+        - interface: utility-model-settings-save-projection
+          from: T7
+          digest: c281b6e0fccfb2dd7bbe72fdc4e9aa8306adedee9e636606e8a8e86bc732912b
+        - interface: supports-utility-model-thinking
+          from: T8
+          digest: 6432ad8a0f02f0323733e7752a4d1e710696b72207ab1bada97d387c9e12aedf
+        - interface: settings-special-model-choice
+          from: T9
+          digest: 69f6bcaeaf34bfb41261c9ad1f5bde1b530bbe30df35ddaee0631b80c5a2bfcc
+        - interface: settings-model-picker-field-special-choice
+          from: T10
+          digest: 15385d412f09a358745780c73140859423d392a72ca33f6f2dd9686565543a88
+        - interface: settings-utility-models-panel-session-only-choice
+          from: T11
+          digest: b13179c1898c245b65a5771d49524820e5190e089dfe317d4ff16e782d7b4bfa
+      produces:
+        - name: session-only-context-docs
+          signature: 'synchronized docs/config.md and docs/config.html claims for utilityModels.context: "session" plus one minor .changeset/context-session-model-only.md'
+          digest: 5284c9856832a6d6b6910935bb5dc3a6c59e91588f9cc62b7fe446ae1e5805bf
+    validation:
+      - argv:
+          - npx
+          - changeset
+          - status
+        mutates_git: false
+      - argv:
+          - npm
+          - run
+          - verify
+        mutates_git: false
+  - id: T13
+    plan_task: 13
+    title: Typecheck sweep, resolver-fake completion, and broad gates
+    lane: integration
+    sequence: 1
+    implementer_tier: standard
+    depends_on:
+      - T1
+      - T2
+      - T3
+      - T4
+      - T5
+      - T6
+      - T7
+      - T8
+      - T9
+      - T10
+      - T11
+    ownership:
+      - src/server/sessions/piSessionService.modelPolicy.test.ts
+      - src/server/sessions/piSessionService.promptQueue.test.ts
+      - src/server/sessions/piSessionService.rateLimits.test.ts
+      - src/server/speechInput/speechInputPolishingService.test.ts
+      - src/server/speechInput/speechInputPolishingService.rateLimits.test.ts
+    exclusive_resources: []
+    interfaces:
+      consumes:
+        - interface: utility-model-session-only-constant
+          from: T1
+          digest: 5cfe727e1b6f3d9e43ccb38fb5438691704407171d5103dd0d82863db408c368
+        - interface: utility-model-inspection-session-model-only
+          from: T2
+          digest: 5c45897f564071c071b7854e38988468c0438d1c0ddb2838750564a510b75e0b
+        - interface: session-before-compact-session-only
+          from: T3
+          digest: 1f6ea053178761e9762159eef152d08c0adca81ad476f2e792fb4c9b63d5d6c4
+        - interface: utility-model-settings-service-v3
+          from: T4
+          digest: 799234d494700e2af7e73fb131d254cc76dd16cd84aaa25af2309c137e65083a
+        - interface: parse-settings-update-sentinel
+          from: T5
+          digest: 97ed09943f87286a5d1aca02edf1c31142ebd1a0e3f71b786c9fb104b2d07942
+        - interface: parse-utility-model-settings-response-v3
+          from: T6
+          digest: 39058a18fb2fc7751347a04b532581c36fe93e6c206612b1a41e16db745e99fc
+        - interface: utility-model-settings-save-projection
+          from: T7
+          digest: c281b6e0fccfb2dd7bbe72fdc4e9aa8306adedee9e636606e8a8e86bc732912b
+        - interface: utility-model-draft-sentinel-transitions
+          from: T8
+          digest: 2ee2df7454f0e68d972600ae855c38c521102da32448a9797f544431992d9df2
+        - interface: settings-model-picker-options-special-first
+          from: T9
+          digest: ff101b48f333fa4d8faeafe7f6b8b2d50ab22a8689d7c77eebf77a2d2ddef5be
+        - interface: settings-model-picker-field-special-choice
+          from: T10
+          digest: 15385d412f09a358745780c73140859423d392a72ca33f6f2dd9686565543a88
+        - interface: settings-utility-models-panel-session-only-choice
+          from: T11
+          digest: b13179c1898c245b65a5771d49524820e5190e089dfe317d4ff16e782d7b4bfa
+      produces:
+        - name: session-model-only-integration-gate
+          signature: 'test-only resolver fakes gain sessionModelOnly: false and a green npm run typecheck and npm run verify:fast'
+          digest: f138aea3eba7cb738d9f49a952ea310a556401eb721af7a6b9a06d781c43ba02
+    validation:
+      - argv:
+          - npm
+          - run
+          - typecheck
+        mutates_git: false
+      - argv:
+          - npm
+          - test
+          - --
+          - --run
+          - src/server/sessions/piSessionService.modelPolicy.test.ts
+          - src/server/sessions/piSessionService.promptQueue.test.ts
+          - src/server/sessions/piSessionService.rateLimits.test.ts
+          - src/server/speechInput/speechInputPolishingService.test.ts
+          - src/server/speechInput/speechInputPolishingService.rateLimits.test.ts
+        mutates_git: false
+      - argv:
+          - npm
+          - run
+          - verify:fast
+        mutates_git: false
