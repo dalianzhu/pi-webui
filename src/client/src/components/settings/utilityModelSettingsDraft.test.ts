@@ -1,18 +1,24 @@
 import { describe, expect, it } from "vitest";
-import type {
-  UtilityModelBinding,
-  UtilityModelOptionV2,
-  UtilityModelSettingsResponseV1,
-  UtilityModelSettingsResponseV2,
+import {
+  UTILITY_MODEL_SESSION_ONLY,
+  type UtilityModelBinding,
+  type UtilityModelOptionV2,
+  type UtilityModelSettingsResponse,
+  type UtilityModelSettingsResponseV1,
+  type UtilityModelSettingsResponseV2,
+  type UtilityModelSettingsResponseV3,
 } from "../../../../shared/apiTypes";
 import {
   AUTO_UTILITY_MODEL_THINKING,
+  supportsUtilityModelThinking,
+  updateUtilityModelDraftContextSessionOnly,
   updateUtilityModelDraftModel,
   updateUtilityModelDraftThinkingLevel,
   utilityModelSettingsDraftFromResponse,
   utilityModelSettingsUpdateFromDraft,
   utilityModelThinkingOptions,
   validateUtilityModelSettingsDraft,
+  type UtilityModelSettingsDraft,
 } from "./utilityModelSettingsDraft";
 
 const lightweightModel = { provider: "openai", id: "gpt-small" };
@@ -53,6 +59,20 @@ function responseV1(overrides: Partial<UtilityModelSettingsResponseV1> = {}): Ut
       { model: lightweightModel, name: "Small" },
       { model: contextModel, name: "Context" },
     ],
+    slots: {
+      lightweight: { valid: true },
+      context: { valid: true },
+    },
+    valid: true,
+    ...overrides,
+  };
+}
+
+function responseV3(overrides: Partial<UtilityModelSettingsResponseV3> = {}): UtilityModelSettingsResponseV3 {
+  return {
+    contractVersion: 3,
+    settings: {},
+    models: [lightweightOption, contextOption],
     slots: {
       lightweight: { valid: true },
       context: { valid: true },
@@ -177,5 +197,93 @@ describe("utility model settings drafts", () => {
         source,
       ),
     ).toBeUndefined();
+  });
+
+  it("clones the session-only sentinel without sharing the settings object", () => {
+    const source = responseV3({ settings: { context: UTILITY_MODEL_SESSION_ONLY } });
+
+    const draft = utilityModelSettingsDraftFromResponse(source);
+
+    expect(draft).toEqual({ context: UTILITY_MODEL_SESSION_ONLY });
+    expect(draft).not.toBe(source.settings);
+  });
+
+  it("treats a Thinking change as a no-op on the sentinel", () => {
+    const draft = { context: UTILITY_MODEL_SESSION_ONLY } as const;
+
+    const next = updateUtilityModelDraftThinkingLevel(draft, "context", "high");
+
+    expect(next).toEqual({ context: UTILITY_MODEL_SESSION_ONLY });
+    expect(next.context).toBe(UTILITY_MODEL_SESSION_ONLY);
+    expect(next).not.toBe(draft);
+  });
+
+  it("replaces the sentinel with a selected model and preserves lightweight", () => {
+    const draft = {
+      lightweight: { ...lightweightModel, thinkingLevel: "low" },
+      context: UTILITY_MODEL_SESSION_ONLY,
+    } satisfies UtilityModelSettingsDraft;
+
+    const next = updateUtilityModelDraftModel(draft, "context", contextOption);
+
+    expect(next).toEqual({
+      lightweight: { ...lightweightModel, thinkingLevel: "low" },
+      context: { ...contextModel },
+    });
+  });
+
+  it("installs the sentinel in one step and keeps lightweight", () => {
+    const next = updateUtilityModelDraftContextSessionOnly({
+      lightweight: { ...lightweightModel, thinkingLevel: "low" },
+    });
+
+    expect(next).toEqual({
+      lightweight: { ...lightweightModel, thinkingLevel: "low" },
+      context: UTILITY_MODEL_SESSION_ONLY,
+    });
+    expect(updateUtilityModelDraftContextSessionOnly(next)).toEqual(next);
+  });
+
+  it("validates and saves the sentinel while v3 explicit levels match v2", () => {
+    const sentinelDraft = utilityModelSettingsDraftFromResponse(
+      responseV3({ settings: { context: UTILITY_MODEL_SESSION_ONLY } }),
+    );
+    expect(validateUtilityModelSettingsDraft(sentinelDraft, responseV3()).slots.context.valid).toBe(true);
+    expect(utilityModelSettingsUpdateFromDraft(sentinelDraft, responseV3())).toEqual({
+      lightweight: null,
+      context: UTILITY_MODEL_SESSION_ONLY,
+    });
+
+    const explicit = { ...contextModel, thinkingLevel: "high" as const };
+    expect(validateUtilityModelSettingsDraft({ context: explicit }, responseV3()).valid).toBe(true);
+    expect(utilityModelThinkingOptions(responseV3(), explicit))
+      .toEqual(utilityModelThinkingOptions(responseV2(), explicit));
+  });
+
+  it("clears the sentinel back to null when the inherited entry is picked", () => {
+    const draft = utilityModelSettingsDraftFromResponse(
+      responseV3({ settings: { context: UTILITY_MODEL_SESSION_ONLY } }),
+    );
+
+    const cleared = updateUtilityModelDraftModel(draft, "context", undefined);
+
+    expect(cleared).toEqual({});
+    expect(utilityModelSettingsUpdateFromDraft(cleared, responseV3())).toEqual({
+      lightweight: null,
+      context: null,
+    });
+  });
+
+  it("narrows thinking-capable responses with supportsUtilityModelThinking", () => {
+    const checkResponse = (response: UtilityModelSettingsResponse): void => {
+      if (supportsUtilityModelThinking(response)) {
+        expect(response.models[0]?.thinkingLevels).toBeDefined();
+      } else {
+        expect(response.contractVersion).toBe(1);
+      }
+    };
+
+    checkResponse(responseV1());
+    checkResponse(responseV2());
   });
 });
