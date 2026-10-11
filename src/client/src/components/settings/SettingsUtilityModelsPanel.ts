@@ -7,13 +7,17 @@ import type {
   UtilityModelSettingsUpdate,
   UtilityModelSlot,
 } from "../../../../shared/apiTypes";
+import { UTILITY_MODEL_SESSION_ONLY } from "../../../../shared/apiTypes";
 import { isKnownThinkingLevel } from "../../../../shared/thinkingLevels";
 import { SettingsModelPickerField } from "./SettingsModelPickerField";
 import "./SettingsPanelFrame";
 import type { SettingsNotice } from "./SettingsPanelFrame";
 import type { UtilityModelSettingsSupport } from "./settingsMachineTarget";
+import type { SettingsSpecialModelChoice } from "./settingsModelOptions";
 import {
   AUTO_UTILITY_MODEL_THINKING,
+  supportsUtilityModelThinking,
+  updateUtilityModelDraftContextSessionOnly,
   updateUtilityModelDraftModel,
   updateUtilityModelDraftThinkingLevel,
   utilityModelSettingsDraftFromResponse,
@@ -35,6 +39,11 @@ const SLOT_DETAILS: Record<UtilityModelSlot, { label: string; description: strin
     description: "Compaction and context summaries",
     emptyLabel: "Use lightweight, then active session model",
   },
+};
+
+const CONTEXT_SESSION_ONLY_CHOICE: SettingsSpecialModelChoice = {
+  value: UTILITY_MODEL_SESSION_ONLY,
+  label: "Only use session model",
 };
 
 @customElement("settings-utility-models-panel")
@@ -162,7 +171,8 @@ export class SettingsUtilityModelsPanel extends LitElement {
     if (response === undefined) return html``;
 
     const detail = SLOT_DETAILS[slot];
-    const binding = this.draft[slot];
+    const selection = this.draft[slot];
+    const binding = selection === UTILITY_MODEL_SESSION_ONLY ? undefined : selection;
     const selectedOption = binding === undefined
       ? undefined
       : response.models.find((option) => sameModel(option.model, binding));
@@ -170,13 +180,20 @@ export class SettingsUtilityModelsPanel extends LitElement {
     const modelId = `select-utility-model-${slot}`;
     const thinkingId = `select-utility-thinking-${slot}`;
     const thinkingOptions = utilityModelThinkingOptions(response, binding);
-    const thinkingValue = response.contractVersion === 2 && selectedOption !== undefined
+    const thinkingCapable = supportsUtilityModelThinking(response);
+    const thinkingValue = thinkingCapable && selectedOption !== undefined
       ? binding?.thinkingLevel ?? AUTO_UTILITY_MODEL_THINKING
       : AUTO_UTILITY_MODEL_THINKING;
     const thinkingDisabled = this.editingDisabled ||
-      response.contractVersion === 1 ||
+      !thinkingCapable ||
       binding === undefined ||
       selectedOption === undefined;
+    const specialChoices = slot === "context" && response.contractVersion === 3
+      ? [CONTEXT_SESSION_ONLY_CHOICE]
+      : [];
+    const selectedSpecialValue = slot === "context" && selection === UTILITY_MODEL_SESSION_ONLY
+      ? UTILITY_MODEL_SESSION_ONLY
+      : "";
 
     return html`
       <div class="field-row ${validation.valid ? "" : "invalid"}" data-slot=${slot}>
@@ -200,6 +217,11 @@ export class SettingsUtilityModelsPanel extends LitElement {
             .inheritedLabel=${detail.emptyLabel}
             .disabled=${this.editingDisabled}
             .invalid=${!validation.valid}
+            .specialChoices=${specialChoices}
+            .selectedSpecialValue=${selectedSpecialValue}
+            .onSelectSpecial=${(value: string) => {
+              this.onSpecialPicked(slot, value);
+            }}
             .onSelect=${(model: TierModelRef | undefined) => {
               this.onModelPicked(slot, model);
             }}
@@ -235,6 +257,12 @@ export class SettingsUtilityModelsPanel extends LitElement {
     if (!(event.currentTarget instanceof HTMLElement)) return;
     const picker = event.currentTarget.nextElementSibling;
     if (picker instanceof SettingsModelPickerField) picker.showPicker();
+  }
+
+  private onSpecialPicked(slot: UtilityModelSlot, value: string): void {
+    if (slot === "context" && value === UTILITY_MODEL_SESSION_ONLY) {
+      this.draft = updateUtilityModelDraftContextSessionOnly(this.draft);
+    }
   }
 
   private onModelPicked(slot: UtilityModelSlot, model: TierModelRef | undefined): void {

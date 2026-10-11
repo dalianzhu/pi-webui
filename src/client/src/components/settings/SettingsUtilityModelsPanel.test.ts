@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type {
-  TierModelRef,
-  UtilityModelOptionV1,
-  UtilityModelOptionV2,
-  UtilityModelSettingsResponseV1,
-  UtilityModelSettingsResponseV2,
+import {
+  UTILITY_MODEL_SESSION_ONLY,
+  type TierModelRef,
+  type UtilityModelOptionV1,
+  type UtilityModelOptionV2,
+  type UtilityModelSettingsResponseV1,
+  type UtilityModelSettingsResponseV2,
+  type UtilityModelSettingsResponseV3,
 } from "../../../../shared/apiTypes";
 import { CommandPicker } from "../CommandPicker";
 import { SettingsModelPickerField } from "./SettingsModelPickerField";
@@ -74,6 +76,23 @@ function responseV1(overrides: Partial<UtilityModelSettingsResponseV1> = {}): Ut
       context: { ...contextModel },
     },
     models: v1Models(),
+    slots: {
+      lightweight: { valid: true },
+      context: { valid: true },
+    },
+    valid: true,
+    ...overrides,
+  };
+}
+
+function responseV3(overrides: Partial<UtilityModelSettingsResponseV3> = {}): UtilityModelSettingsResponseV3 {
+  return {
+    contractVersion: 3,
+    settings: {
+      lightweight: { ...smallModel, thinkingLevel: "high" },
+      context: { ...contextModel, thinkingLevel: "medium" },
+    },
+    models: v2Models(),
     slots: {
       lightweight: { valid: true },
       context: { valid: true },
@@ -360,6 +379,101 @@ describe("SettingsUtilityModelsPanel", () => {
     ]);
     const frameRoot = requireShadowRoot(frame);
     expect(frameRoot.querySelectorAll(".notice")).toHaveLength(4);
+  });
+
+  it("renders the session-only choice only for the v3 Context row", async () => {
+    const v2Panel = await mountPanel((element) => {
+      element.response = responseV2();
+    });
+
+    await openPicker(modelPicker(v2Panel, "context"));
+    expect(pickerOptionLabels(modelPicker(v2Panel, "context"))).not.toContain("Only use session model");
+    await openPicker(modelPicker(v2Panel, "lightweight"));
+    expect(pickerOptionLabels(modelPicker(v2Panel, "lightweight"))).not.toContain("Only use session model");
+
+    const v3Panel = await mountPanel((element) => {
+      element.response = responseV3();
+    });
+
+    await openPicker(modelPicker(v3Panel, "context"));
+    expect(pickerOptionLabels(modelPicker(v3Panel, "context"))).toEqual([
+      "Only use session model",
+      "Use lightweight, then active session model",
+      "claude-context",
+      "gpt-small",
+    ]);
+    await openPicker(modelPicker(v3Panel, "lightweight"));
+    expect(pickerOptionLabels(modelPicker(v3Panel, "lightweight"))).not.toContain("Only use session model");
+  });
+
+  it("selects the sentinel, disables Thinking showing auto, and saves it", async () => {
+    const onSave = vi.fn();
+    const panel = await mountPanel((element) => {
+      element.response = responseV3();
+      element.onSave = onSave;
+    });
+
+    await selectModel(panel, "context", "Only use session model");
+
+    const thinking = thinkingSelect(panel, "context");
+    expect(thinking.value).toBe("auto");
+    expect(thinking.disabled).toBe(true);
+    expect(thinkingSelect(panel, "lightweight").disabled).toBe(false);
+    expect(saveButton(panel).disabled).toBe(false);
+
+    saveButton(panel).click();
+    expect(onSave).toHaveBeenCalledWith({
+      lightweight: { ...smallModel, thinkingLevel: "high" },
+      context: UTILITY_MODEL_SESSION_ONLY,
+    });
+  });
+
+  it("replaces the sentinel with a selected model", async () => {
+    const onSave = vi.fn();
+    const panel = await mountPanel((element) => {
+      element.response = responseV3();
+      element.onSave = onSave;
+    });
+
+    await selectModel(panel, "context", "Only use session model");
+    await selectModel(panel, "context", contextModel.id);
+
+    expect(triggerText(modelPicker(panel, "context"))).toBe("anthropic/claude-context");
+    saveButton(panel).click();
+    expect(onSave).toHaveBeenCalledWith({
+      lightweight: { ...smallModel, thinkingLevel: "high" },
+      context: { ...contextModel },
+    });
+  });
+
+  it("clears the sentinel when the inherited entry is picked", async () => {
+    const onSave = vi.fn();
+    const panel = await mountPanel((element) => {
+      element.response = responseV3();
+      element.onSave = onSave;
+    });
+
+    await selectModel(panel, "context", "Only use session model");
+    await selectModel(panel, "context", "Use lightweight, then active session model");
+
+    saveButton(panel).click();
+    expect(onSave).toHaveBeenCalledWith({
+      lightweight: { ...smallModel, thinkingLevel: "high" },
+      context: null,
+    });
+  });
+
+  it("renders and enables a v3 explicit level exactly as v2", async () => {
+    const panel = await mountPanel((element) => {
+      element.response = responseV3({
+        settings: { context: { ...contextModel, thinkingLevel: "low" } },
+      });
+    });
+
+    const thinking = thinkingSelect(panel, "context");
+    expect(thinking.value).toBe("low");
+    expect(thinking.disabled).toBe(false);
+    expect(optionValues(thinking)).toContain("low");
   });
 });
 
