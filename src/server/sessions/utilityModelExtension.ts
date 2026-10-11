@@ -189,6 +189,9 @@ export function createUtilityModelHandlers(
     sessionBeforeCompact: async (event, ctx) => {
       if (ctx.model === undefined) return undefined;
 
+      const inspection = await deps.resolver.inspect("context");
+      if (inspection.sessionModelOnly) return undefined; // Pi compacts with the active session model
+
       const refs = availableRefs(deps.refs);
       if (refs === undefined) return undefined;
 
@@ -200,8 +203,7 @@ export function createUtilityModelHandlers(
         return undefined;
       }
 
-      const candidates = await deps.resolver.configuredCandidates("context");
-      for (const candidate of candidates) {
+      for (const candidate of inspection.candidates) {
         if (isAborted(event.signal)) return { cancel: true };
         const auth = await resolveCandidateAuth(deps, "context", candidate);
         if (isAborted(event.signal)) return { cancel: true };

@@ -253,7 +253,8 @@ describe("utility model compaction handler", () => {
       handlers.sessionBeforeCompact(event, contextWithModel(activeModel)),
     ).resolves.toEqual({ compaction: compactionResult });
 
-    expect(resolver.configuredCandidates).toHaveBeenCalledWith("context");
+    expect(resolver.inspect).toHaveBeenCalledWith("context");
+    expect(resolver.configuredCandidates).not.toHaveBeenCalled();
     expect(compact).toHaveBeenCalledTimes(2);
     expect(compact.mock.calls.map((call) => call[1])).toEqual([
       contextModel,
@@ -391,6 +392,165 @@ describe("utility model compaction handler", () => {
     ).resolves.toEqual({ cancel: true });
     expect(compact).toHaveBeenCalledOnce();
   });
+
+  it("starts no candidate work when the inspection is session-only", async () => {
+    const retry = { enabled: true, maxRetries: 2, baseDelayMs: 10, maxAgentDelayMs: 60_000 };
+    const streamFunction = vi.fn<StreamFn>();
+    const getRetrySettings = vi.fn(() => retry);
+    const getBranchSummarySettings = vi.fn(() => ({ reserveTokens: 1_024, skipPrompt: false }));
+    const getAuth = vi.fn(() => Promise.resolve({ auth: { apiKey: "test-key" } }));
+    const compact = vi.fn<CompactFn>(() => Promise.resolve(compactionResult));
+    const logger = { info: vi.fn() };
+    const resolver = resolverFor(
+      { context: [contextMax, lightweightLow] },
+      { sessionModelOnly: true },
+    );
+    const handlers = createUtilityModelHandlers({
+      resolver,
+      modelRuntime: { getAuth },
+      refs: {
+        streamFunction,
+        settingsManager: { getRetrySettings, getBranchSummarySettings },
+      },
+      generateBranchSummary: successfulBranchSummary(),
+      compact,
+      logger,
+    });
+
+    await expect(
+      handlers.sessionBeforeCompact(compactEvent(), contextWithModel(activeModel)),
+    ).resolves.toBeUndefined();
+
+    expect(resolver.inspect).toHaveBeenCalledOnce();
+    expect(resolver.inspect).toHaveBeenCalledWith("context");
+    expect(resolver.configuredCandidates).not.toHaveBeenCalled();
+    expect(compact).not.toHaveBeenCalled();
+    expect(getAuth).not.toHaveBeenCalled();
+    expect(getRetrySettings).not.toHaveBeenCalled();
+    expect(getBranchSummarySettings).not.toHaveBeenCalled();
+    expect(streamFunction).not.toHaveBeenCalled();
+    expect(logger.info).not.toHaveBeenCalled();
+  });
+
+  it("treats manual and automatic compaction identically in session-only mode", async () => {
+    const retry = { enabled: true, maxRetries: 1, baseDelayMs: 1, maxAgentDelayMs: 60_000 };
+    const getRetrySettings = vi.fn(() => retry);
+    const getAuth = vi.fn(() => Promise.resolve({ auth: { apiKey: "test-key" } }));
+    const compact = vi.fn<CompactFn>(() => Promise.resolve(compactionResult));
+    const resolver = resolverFor(
+      { context: [contextMax, lightweightLow] },
+      { sessionModelOnly: true },
+    );
+    const handlers = createUtilityModelHandlers({
+      resolver,
+      modelRuntime: { getAuth },
+      refs: {
+        streamFunction: vi.fn<StreamFn>(),
+        settingsManager: {
+          getRetrySettings,
+          getBranchSummarySettings: () => ({ reserveTokens: 1_024, skipPrompt: false }),
+        },
+      },
+      generateBranchSummary: successfulBranchSummary(),
+      compact,
+    });
+
+    await expect(
+      handlers.sessionBeforeCompact(compactEvent({ reason: "manual" }), contextWithModel(activeModel)),
+    ).resolves.toBeUndefined();
+    await expect(
+      handlers.sessionBeforeCompact(compactEvent({ reason: "threshold" }), contextWithModel(activeModel)),
+    ).resolves.toBeUndefined();
+
+    expect(compact).not.toHaveBeenCalled();
+    expect(getAuth).not.toHaveBeenCalled();
+    expect(getRetrySettings).not.toHaveBeenCalled();
+  });
+
+  it("produces the same session-only result for different context models", async () => {
+    const compact = vi.fn<CompactFn>(() => Promise.resolve(compactionResult));
+    const resolver = resolverFor(
+      { context: [contextMax, lightweightLow] },
+      { sessionModelOnly: true },
+    );
+    const handlers = createHandlers({ resolver, compact });
+
+    await expect(
+      handlers.sessionBeforeCompact(compactEvent(), contextWithModel(activeModel)),
+    ).resolves.toBeUndefined();
+    await expect(
+      handlers.sessionBeforeCompact(
+        compactEvent(),
+        contextWithModel(fakeModel("session", "other", true)),
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(compact).not.toHaveBeenCalled();
+    expect(resolver.inspect).toHaveBeenCalledTimes(2);
+  });
+
+  it("starts no candidate work for an aborted session-only compaction", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const retry = { enabled: true, maxRetries: 1, baseDelayMs: 1, maxAgentDelayMs: 60_000 };
+    const getRetrySettings = vi.fn(() => retry);
+    const getAuth = vi.fn(() => Promise.resolve({ auth: { apiKey: "test-key" } }));
+    const compact = vi.fn<CompactFn>(() => Promise.resolve(compactionResult));
+    const resolver = resolverFor(
+      { context: [contextMax, lightweightLow] },
+      { sessionModelOnly: true },
+    );
+    const handlers = createUtilityModelHandlers({
+      resolver,
+      modelRuntime: { getAuth },
+      refs: {
+        streamFunction: vi.fn<StreamFn>(),
+        settingsManager: {
+          getRetrySettings,
+          getBranchSummarySettings: () => ({ reserveTokens: 1_024, skipPrompt: false }),
+        },
+      },
+      generateBranchSummary: successfulBranchSummary(),
+      compact,
+    });
+
+    await expect(
+      handlers.sessionBeforeCompact(
+        compactEvent({ signal: controller.signal }),
+        contextWithModel(activeModel),
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(compact).not.toHaveBeenCalled();
+    expect(getAuth).not.toHaveBeenCalled();
+    expect(getRetrySettings).not.toHaveBeenCalled();
+  });
+
+  it("keeps the Lightweight handler untouched by a session-only Context", async () => {
+    const resolver = resolverFor(
+      { lightweight: [lightweightLow] },
+      { sessionModelOnly: true },
+    );
+    const handlers = createHandlers({ resolver });
+
+    const result = await handlers.sessionBeforeTree(treeEvent(), contextWithModel(activeModel));
+
+    expect(result?.summary?.summary).toBe("summary");
+    expect(resolver.configuredCandidates).toHaveBeenCalledWith("lightweight");
+    expect(resolver.inspect).not.toHaveBeenCalled();
+  });
+
+  it("still runs the inspection before the degraded refs path", async () => {
+    const resolver = resolverFor({ context: [contextMax] });
+    const handlers = createHandlers({ resolver, refs: {} });
+
+    await expect(
+      handlers.sessionBeforeCompact(compactEvent(), contextWithModel(activeModel)),
+    ).resolves.toBeUndefined();
+
+    expect(resolver.inspect).toHaveBeenCalledOnce();
+    expect(resolver.inspect).toHaveBeenCalledWith("context");
+  });
 });
 
 describe("utility model inline extension", () => {
@@ -464,16 +624,17 @@ function resolverFor(
   candidates: Partial<
     Record<"lightweight" | "context", readonly ResolvedUtilityModel<Model<Api>>[]>
   >,
+  options: { sessionModelOnly?: boolean } = {},
 ) {
   const configuredCandidates = vi.fn((task: "lightweight" | "context") =>
     Promise.resolve(candidates[task] ?? []),
   );
-  return {
-    inspect: async (task: "lightweight" | "context") => ({
-      candidates: await configuredCandidates(task),
-    }),
-    configuredCandidates,
-  };
+  // eslint-disable-next-line @typescript-eslint/require-await -- Keep the mocked inspection promise-shaped like the real resolver.
+  const inspect = vi.fn(async (task: "lightweight" | "context") => ({
+    candidates: candidates[task] ?? [],
+    sessionModelOnly: options.sessionModelOnly === true && task === "context",
+  }));
+  return { inspect, configuredCandidates };
 }
 
 function resolvedCandidate(
@@ -530,6 +691,7 @@ function compactEvent(
   overrides: {
     signal?: AbortSignal;
     customInstructions?: string;
+    reason?: SessionBeforeCompactEvent["reason"];
   } = {},
 ): SessionBeforeCompactEvent {
   const signal = overrides.signal ?? new AbortController().signal;
@@ -548,7 +710,7 @@ function compactEvent(
     ...(overrides.customInstructions === undefined
       ? {}
       : { customInstructions: overrides.customInstructions }),
-    reason: "threshold",
+    reason: overrides.reason ?? "threshold",
     willRetry: false,
     signal,
   };
