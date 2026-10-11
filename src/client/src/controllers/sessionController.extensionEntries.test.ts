@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { initialAppState } from "../appState";
+import { SESSION_EXTENSION_ENTRY_LIMIT, type SessionInfo } from "../../../shared/apiTypes";
 import { SessionController } from "./sessionController";
 import { defaultApi, EmitSocket, emptyPage, oldSession, status, workspace, type AppState } from "./sessionController.testSupport";
 
@@ -76,6 +77,67 @@ describe("SessionController extension entries", () => {
 
     expect(harness.state().sessionExtensionEntries).toEqual([]);
     expect(harness.state().selectedSession).toEqual(oldSession);
+  });
+
+  it("clears extension entries when the selected session changes to an archived session", async () => {
+    const harness = createController([extensionEntry("e1", 1)]);
+    await harness.controller.selectSession(oldSession, { updateUrl: false });
+    expect(harness.state().sessionExtensionEntries).toHaveLength(1);
+
+    // An archived selection loads history only, so nothing would otherwise replace the entries
+    // that belong to the session the user just left.
+    const archived = { ...oldSession, id: "session-archived", archived: true };
+    await harness.controller.selectSession(archived, { updateUrl: false });
+
+    expect(harness.state().sessionExtensionEntries).toEqual([]);
+  });
+
+  it("clears extension entries when the selected session becomes a pending start", async () => {
+    const harness = createController([extensionEntry("e1", 1)]);
+    await harness.controller.selectSession(oldSession, { updateUrl: false });
+    expect(harness.state().sessionExtensionEntries).toHaveLength(1);
+
+    const pendingStart: SessionInfo & { clientPendingStart: true; machineId: string } = {
+      ...oldSession,
+      id: "session-pending",
+      clientPendingStart: true,
+      machineId: "local",
+    };
+    await harness.controller.selectSession(pendingStart, { updateUrl: false });
+
+    expect(harness.state().sessionExtensionEntries).toEqual([]);
+  });
+
+  it("holds the retention limit on live updates", async () => {
+    const harness = createController([]);
+    await harness.controller.selectSession(oldSession, { updateUrl: false });
+
+    for (let index = 0; index < SESSION_EXTENSION_ENTRY_LIMIT + 5; index += 1) {
+      harness.socket.emit({ type: "session.extensionEntry", entry: extensionEntry(`e${String(index)}`, index) });
+    }
+
+    const entries = harness.state().sessionExtensionEntries;
+    expect(entries).toHaveLength(SESSION_EXTENSION_ENTRY_LIMIT);
+    // Oldest entries are dropped, so the window still ends at the newest entry.
+    expect(entries[0]?.entryId).toBe("e5");
+    expect(entries.at(-1)?.entryId).toBe(`e${String(SESSION_EXTENSION_ENTRY_LIMIT + 4)}`);
+  });
+
+  it("keeps deduplicating by entry id while applying the limit", async () => {
+    const harness = createController([]);
+    await harness.controller.selectSession(oldSession, { updateUrl: false });
+
+    for (let index = 0; index < SESSION_EXTENSION_ENTRY_LIMIT; index += 1) {
+      harness.socket.emit({ type: "session.extensionEntry", entry: extensionEntry(`e${String(index)}`, index) });
+    }
+    // A repeat of an entry that is still inside the window updates it in place instead of
+    // dropping the oldest entry to make room for a duplicate.
+    harness.socket.emit({ type: "session.extensionEntry", entry: extensionEntry("e10", 99) });
+
+    const entries = harness.state().sessionExtensionEntries;
+    expect(entries).toHaveLength(SESSION_EXTENSION_ENTRY_LIMIT);
+    expect(entries.filter((entry) => entry.entryId === "e10")).toEqual([extensionEntry("e10", 99)]);
+    expect(entries[0]?.entryId).toBe("e0");
   });
 
   it("clears extension entries when the session is deselected", async () => {

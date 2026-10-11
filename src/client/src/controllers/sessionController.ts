@@ -14,6 +14,7 @@ import { StreamEventBuffer, isBufferedStreamEvent } from "../streamEventBuffer";
 import { isArchivableSessionInfo, isTransientNewSessionInfo, sessionPersistenceOptionsForRuntime } from "../sessionPersistence";
 import { isSessionActive } from "../../../shared/activity";
 import { PI_WEBUI_CAPABILITIES, supportsPiWebUiCapability } from "../../../shared/capabilities";
+import { SESSION_EXTENSION_ENTRY_LIMIT } from "../../../shared/apiTypes";
 import type { ClientSessionModelPolicyStatus, ExactModelSelection, PromptAttachmentDelivery, SessionModelPolicyMode, SessionModelPolicyResponse, SessionModelPolicyUpdate, SessionExtensionEntry, SessionNotificationInboxEvent, StarterModelPolicyPreference } from "../../../shared/apiTypes";
 import { InMemorySessionSelectionMemory, markSessionArchived, markSessionsArchived, selectPreferredSession, selectionAfterArchivingSession, selectionAfterArchivingSessions, shouldDeselectAfterArchivedCollapse, type SessionSelectionMemory } from "./sessionSelection";
 import { selectedMachineId, type GetState, type SetState, type UpdateUrl } from "./types";
@@ -471,6 +472,10 @@ export class SessionController {
     this.setState({
       selectedSession: session,
       ...cached,
+      // Extension entries belong to one session. Clear them at selection start because an
+      // archived selection loads history only and would otherwise keep showing the previous
+      // session's entries under the new selection.
+      sessionExtensionEntries: [],
       isLoadingEarlierMessages: false,
       ...(options?.preserveTreeDialog === true ? {} : { treeDialog: undefined }),
       status: session.archived === true ? undefined : this.getState().sessionStatuses[session.id],
@@ -1801,6 +1806,7 @@ export class SessionController {
       ...(options?.sessions === undefined ? {} : { sessions: options.sessions }),
       selectedSession: session,
       messages: [],
+      sessionExtensionEntries: [],
       messagePageStart: 0,
       messagePageEnd: 0,
       messagePageTotal: 0,
@@ -2035,11 +2041,21 @@ export class SessionController {
    */
   private applySessionExtensionEntry(entry: SessionExtensionEntry) {
     const entries = this.getState().sessionExtensionEntries;
-    const index = entries.findIndex((candidate) => candidate.entryId === entry.entryId);
-    const sessionExtensionEntries =
+    // An entry the join read already contained is replaced in place, so a live event cannot
+    // duplicate it. Entry ids are stable within a session; an entry Pi recorded without an id
+    // is appended, because treating every id-less entry as the same entry would drop state.
+    const index =
+      entry.entryId === "" ? -1 : entries.findIndex((candidate) => candidate.entryId === entry.entryId);
+    const merged =
       index === -1
         ? [...entries, entry]
         : entries.map((candidate, position) => (position === index ? entry : candidate));
+    // Hold the same recent window the service enforces, so live updates cannot grow the list
+    // past the documented bound between refreshes.
+    const sessionExtensionEntries =
+      merged.length > SESSION_EXTENSION_ENTRY_LIMIT
+        ? merged.slice(merged.length - SESSION_EXTENSION_ENTRY_LIMIT)
+        : merged;
     this.setState({ sessionExtensionEntries });
   }
 

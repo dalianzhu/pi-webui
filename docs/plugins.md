@@ -470,6 +470,7 @@ interface PiWebUiPlugin {
 
 interface PluginHostCapabilities {
   activityRailItems?: true;
+  sessionExtensionEntries?: true;
 }
 
 interface PluginActivationContext {
@@ -568,6 +569,7 @@ interface PluginRuntimeContext {
   state: {
     selectedWorkspace?: Workspace;
     selectedSession?: unknown;
+    sessionExtensionEntries?: readonly SessionExtensionEntry[];
     piWebUiStatus?: PiWebUiStatusResponse;
   };
   prompt: PluginPromptEditor;
@@ -590,7 +592,7 @@ interface PluginRuntimeContext {
 Notes:
 
 - `state` is a snapshot of current UI state when actions are built.
-- The stable state fields are `state.selectedWorkspace`, `state.selectedSession`, and `state.piWebUiStatus`. `state.piWebUiStatus` describes the currently selected machine's PI WEBUI runtime, or the gateway/local runtime when the local machine is selected.
+- The stable state fields are `state.selectedWorkspace`, `state.selectedSession`, `state.sessionExtensionEntries` (described in [Reading session extension entries](#reading-session-extension-entries)), and `state.piWebUiStatus`. `state.piWebUiStatus` describes the currently selected machine's PI WEBUI runtime, or the gateway/local runtime when the local machine is selected.
 - Other `state` fields may exist at runtime, but they are private PI WEBUI internals that may graduate into stable helpers, change shape, or disappear.
 - `enabled` is evaluated when the action palette asks for actions.
 - `selectWorkspaceTool()` expects a qualified panel id such as `my-plugin:workspace.info`.
@@ -1172,7 +1174,7 @@ If you are an AI agent building or editing a PI WEBUI plugin, follow this checkl
 11. Add Activity Rail activities for focused host-owned dialogs; require an icon and title, and check `workspaceScope` before using it.
 12. Add workspace labels for compact inline metadata.
 13. Return arrays from workspace label `items()`; return an empty array to render nothing.
-14. Use documented context helpers first: `files`, `terminal`, `host.requestRender`, `host.close`, `workspaceScope`, `workspace`, `machine`, `state.selectedWorkspace`, `state.selectedSession`, `state.piWebUiStatus`, and `prompt`.
+14. Use documented context helpers first: `files`, `terminal`, `host.requestRender`, `host.close`, `workspaceScope`, `workspace`, `machine`, `state.selectedWorkspace`, `state.selectedSession`, `state.sessionExtensionEntries`, `state.piWebUiStatus`, and `prompt`.
 15. Do not fetch PI WEBUI `/api/...` endpoints directly unless you intentionally accept private API churn; prefer documented helpers.
 16. Treat plugins as trusted code and avoid reading or displaying secrets unless intentional.
 17. After local edits, tell the user to hard reload the browser and check the console for plugin errors.

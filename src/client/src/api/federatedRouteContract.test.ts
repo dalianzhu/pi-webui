@@ -193,6 +193,7 @@ describe("federated route contract", () => {
       ignoreParseFailure(sessionsApi.status(session, machineId)),
       ignoreParseFailure(sessionsApi.rememberCurrentModelPolicy(session, machineId)),
       ignoreParseFailure(sessionsApi.systemPrompt(session, machineId)),
+      ignoreParseFailure(sessionsApi.extensionEntries(session, machineId)),
       ignoreParseFailure(sessionsApi.streamSnapshot(session, machineId)),
       ignoreParseFailure(sessionsApi.clearQueue(session, machineId)),
       ignoreParseFailure(sessionsApi.models(session, machineId)),
