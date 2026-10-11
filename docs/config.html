@@ -795,6 +795,9 @@
                 <li>Explicit options are derived from the selected model's supported levels and may include <code>off</code>, <code>minimal</code>, <code>low</code>, <code>medium</code>, <code>high</code>, <code>xhigh</code>, and <code>max</code>.</li>
                 <li>Changing a model resets that row to <code>auto</code>. A saved explicit level that the model no longer supports remains visible, blocks save, and causes only that utility slot to be skipped until repaired.</li>
                 <li>Title generation and branch summaries try <code>lightweight</code>, then the active session model. Compaction tries <code>context</code>, then <code>lightweight</code>, then the active session model; the Context-to-Lightweight fallback uses each row's own configured level.</li>
+                <li><code>context</code> also accepts the literal string <code>"session"</code>, shown in <strong>Settings → Utility models</strong> as <strong>Only use session model</strong>. In this state compaction uses the active session model and thinking level directly: it attempts neither the configured <code>context</code> model nor <code>lightweight</code>, and it never resolves a utility candidate.</li>
+                <li>The <strong>Only use session model</strong> choice is offered only when the selected machine's runtime reports utility-model settings contract version 3. On an older remote the Context row keeps its existing editor and routing; an old client against a contract-3 runtime shows a utility-models error until it is upgraded.</li>
+                <li>Installing this feature requires one manual <code>pi-webui-sessiond.service</code> restart (<code>systemctl --user restart pi-webui-sessiond.service</code>): the resolver short-circuit and the compaction handler are compiled into the long-lived, non-autoreloading session daemon, and ordinary UI/API autoreload does not load them. A saved <code>"session"</code> value keeps applying immediately on each subsequent utility operation after that one-time restart.</li>
                 <li>When both settings are unset, existing active-session behavior is preserved. An unset, malformed, unavailable, unauthenticated, authentication-failing, or call-failing candidate advances to the next fallback in its order. The active-session fallback keeps its existing behavior.</li>
                 <li>Utility calls never change the selected session model, its thinking level, or Pi's remembered default.</li>
                 <li>Version 1 remotes remain model-configurable but require an upgraded runtime for explicit thinking levels.</li>
@@ -804,6 +807,12 @@
                 <li>Older clients show the substitution only as the session's model; current clients also warn before the start when they can evaluate the policy and show a notice naming the used model.</li>
                 <li>Installing the lightweight fallback requires one manual <code>pi-webui-sessiond.service</code> restart (<code>systemctl --user restart pi-webui-sessiond.service</code>): the capability is compiled into the long-lived, non-autoreloading session daemon, and ordinary UI/API autoreload does not load it. Until the daemon restarts, <code>sessions.modelPolicyLightweightFallback</code> is not advertised and <code>+</code> keeps blocking.</li>
               </ul>
+              <pre><code>{
+  "utilityModels": {
+    "lightweight": { "provider": "acme", "id": "small", "thinkingLevel": "low" },
+    "context": "session"
+  }
+}</code></pre>
             </section>
 
             <section id="model-tiers">
