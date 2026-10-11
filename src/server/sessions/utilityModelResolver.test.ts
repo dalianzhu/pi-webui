@@ -1,4 +1,5 @@
 import type { UtilityModelSettings } from "../../shared/apiTypes.js";
+import { UTILITY_MODEL_SESSION_ONLY } from "../../shared/apiTypes.js";
 import { describe, expect, it, vi } from "vitest";
 import {
   createUtilityModelResolver,
@@ -207,10 +208,12 @@ describe("utility model resolver", () => {
 
       await expect(empty.resolver.inspect("lightweight")).resolves.toEqual({
         candidates: [],
+        sessionModelOnly: false,
         unavailable: { reason: "slot-unset" },
       });
       await expect(emptyModels.resolver.inspect("lightweight")).resolves.toEqual({
         candidates: [],
+        sessionModelOnly: false,
         unavailable: { reason: "slot-unset" },
       });
     });
@@ -222,6 +225,7 @@ describe("utility model resolver", () => {
 
       await expect(resolver.inspect("lightweight")).resolves.toEqual({
         candidates: [],
+        sessionModelOnly: false,
         unavailable: {
           reason: "config-invalid",
           detail: "utilityModels.lightweight.id is required",
@@ -236,6 +240,7 @@ describe("utility model resolver", () => {
 
       await expect(resolver.inspect("lightweight")).resolves.toEqual({
         candidates: [],
+        sessionModelOnly: false,
         unavailable: { reason: "model-unavailable", detail: "acme/retired" },
       });
     });
@@ -252,6 +257,7 @@ describe("utility model resolver", () => {
 
       await expect(resolver.inspect("lightweight")).resolves.toEqual({
         candidates: [],
+        sessionModelOnly: false,
         unavailable: { reason: "thinking-level-unsupported", detail: "max" },
       });
     });
@@ -273,6 +279,7 @@ describe("utility model resolver", () => {
 
       await expect(resolver.inspect("lightweight")).resolves.toEqual({
         candidates: [],
+        sessionModelOnly: false,
         unavailable: { reason: "resolution-failed", detail: "catalog unavailable" },
       });
       expect(logger.info).toHaveBeenCalledWith(
@@ -289,8 +296,83 @@ describe("utility model resolver", () => {
 
       await expect(resolver.inspect("lightweight")).resolves.toEqual({
         candidates: [],
+        sessionModelOnly: false,
         unavailable: { reason: "resolution-failed", detail: "config unavailable" },
       });
+    });
+
+    it("returns the session-only inspection for Context", async () => {
+      const { resolver } = createHarness({
+        utilityModels: { context: UTILITY_MODEL_SESSION_ONLY },
+      });
+
+      const inspection = await resolver.inspect("context");
+
+      expect(inspection).toEqual({ candidates: [], sessionModelOnly: true });
+      expect(Object.hasOwn(inspection, "unavailable")).toBe(false);
+      await expect(resolver.configuredCandidates("context")).resolves.toEqual([]);
+    });
+
+    it("keeps Lightweight resolution under a session-only Context", async () => {
+      const { resolver } = createHarness({
+        utilityModels: {
+          lightweight: { provider: "acme", id: "small" },
+          context: UTILITY_MODEL_SESSION_ONLY,
+        },
+      });
+
+      await expect(resolver.inspect("lightweight")).resolves.toEqual({
+        candidates: [
+          { model: lightweight, thinkingLevel: "minimal", slot: "lightweight" },
+        ],
+        sessionModelOnly: false,
+      });
+    });
+
+    it("never reports session-only for the inherited or fixed states", async () => {
+      const states = [
+        createHarness({}),
+        createHarness({ utilityModels: {} }),
+        createHarness({
+          utilityModels: { context: { provider: "acme", id: "large" } },
+        }),
+      ];
+
+      for (const { resolver } of states) {
+        expect((await resolver.inspect("lightweight")).sessionModelOnly).toBe(false);
+        expect((await resolver.inspect("context")).sessionModelOnly).toBe(false);
+      }
+    });
+
+    it("keeps configuration-error precedence over the sentinel", async () => {
+      const { resolver } = createHarness({
+        utilityModelsError: "utilityModels.lightweight.id is required",
+        utilityModels: { context: UTILITY_MODEL_SESSION_ONLY },
+      });
+
+      await expect(resolver.inspect("context")).resolves.toEqual({
+        candidates: [],
+        sessionModelOnly: false,
+        unavailable: {
+          reason: "config-invalid",
+          detail: "utilityModels.lightweight.id is required",
+        },
+      });
+    });
+
+    it("treats the sentinel as a resolved state, not a slot failure", async () => {
+      const { resolver } = createHarness({
+        utilityModels: {
+          lightweight: { provider: "acme", id: "small" },
+          context: UTILITY_MODEL_SESSION_ONLY,
+        },
+      });
+
+      const inspection = await resolver.inspect("context");
+
+      expect(inspection).toEqual({ candidates: [], sessionModelOnly: true });
+      expect(Object.hasOwn(inspection, "unavailable")).toBe(false);
+      expect(inspection.candidates).toEqual([]);
     });
 
     it("omits unavailable when a candidate resolves", async () => {
@@ -323,7 +405,7 @@ describe("utility model fallback runner", () => {
       thinkingLevel: "minimal" as const,
     });
     const resolver: UtilityModelResolver<FakeModel> = {
-      inspect: vi.fn(() => Promise.resolve({ candidates: configured })),
+      inspect: vi.fn(() => Promise.resolve({ candidates: configured, sessionModelOnly: false })),
       configuredCandidates: vi.fn(() => Promise.resolve(configured)),
     };
     const failure = new Error("off attempt failed");
@@ -377,7 +459,7 @@ describe("utility model fallback runner", () => {
       thinkingLevel: "minimal" as const,
     });
     const resolver: UtilityModelResolver<FakeModel> = {
-      inspect: vi.fn(() => Promise.resolve({ candidates: [configured] })),
+      inspect: vi.fn(() => Promise.resolve({ candidates: [configured], sessionModelOnly: false })),
       configuredCandidates: vi.fn(() => Promise.resolve([configured])),
     };
     const run = vi.fn(() => Promise.resolve(undefined));

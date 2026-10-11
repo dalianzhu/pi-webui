@@ -1,7 +1,8 @@
-import type {
-  UtilityModelBinding,
-  UtilityModelSettings,
-  UtilityModelSlot,
+import {
+  UTILITY_MODEL_SESSION_ONLY,
+  type UtilityModelBinding,
+  type UtilityModelSettings,
+  type UtilityModelSlot,
 } from "../../shared/apiTypes.js";
 import type { ThinkingLevel } from "../../shared/thinkingLevels.js";
 
@@ -36,6 +37,8 @@ export interface UtilityModelUnavailable {
 
 export interface UtilityModelInspection<TModel extends UtilityModelIdentity> {
   candidates: readonly ResolvedUtilityModel<TModel>[];
+  /** True when the task must bypass configured candidates and use the active session model. */
+  sessionModelOnly: boolean;
   unavailable?: UtilityModelUnavailable;
 }
 
@@ -92,6 +95,7 @@ export function createUtilityModelResolver<
       if (config.utilityModelsError !== undefined) {
         return {
           candidates: [],
+          sessionModelOnly: false,
           unavailable: {
             reason: "config-invalid",
             detail: config.utilityModelsError,
@@ -99,7 +103,10 @@ export function createUtilityModelResolver<
         };
       }
       if (config.utilityModels === undefined) {
-        return { candidates: [], unavailable: { reason: "slot-unset" } };
+        return { candidates: [], sessionModelOnly: false, unavailable: { reason: "slot-unset" } };
+      }
+      if (task === "context" && config.utilityModels.context === UTILITY_MODEL_SESSION_ONLY) {
+        return { candidates: [], sessionModelOnly: true };
       }
 
       const available = deps.modelRuntime.getAvailableSnapshot();
@@ -109,6 +116,13 @@ export function createUtilityModelResolver<
       for (const slot of taskSlots[task]) {
         const reference = config.utilityModels[slot];
         if (reference === undefined) {
+          slotFailure ??= { reason: "slot-unset" };
+          continue;
+        }
+        if (typeof reference === "string") {
+          // Defensive only: the Context sentinel returned above, and Lightweight is
+          // typed as a binding, so no parsed configuration reaches this branch.
+          // Never dereference a sentinel as a binding.
           slotFailure ??= { reason: "slot-unset" };
           continue;
         }
@@ -128,8 +142,6 @@ export function createUtilityModelResolver<
           deps.thinkingLevelsForModel(candidate),
         );
         if (thinkingLevel === undefined) {
-          // `effectiveThinkingLevel` only returns undefined for an explicitly
-          // configured level the model does not support.
           slotFailure ??= {
             reason: "thinking-level-unsupported",
             detail: reference.thinkingLevel ?? "",
@@ -142,9 +154,10 @@ export function createUtilityModelResolver<
         seen.add(key);
         candidates.push(resolved);
       }
-      if (candidates.length > 0) return { candidates };
+      if (candidates.length > 0) return { candidates, sessionModelOnly: false };
       return {
         candidates: [],
+        sessionModelOnly: false,
         unavailable: slotFailure ?? { reason: "resolution-failed" },
       };
     } catch (error) {
@@ -155,6 +168,7 @@ export function createUtilityModelResolver<
       );
       return {
         candidates: [],
+        sessionModelOnly: false,
         unavailable: {
           reason: "resolution-failed",
           detail: error instanceof Error ? error.message : String(error),
