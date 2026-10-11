@@ -1186,6 +1186,8 @@ export interface PiSessionServiceDependencies {
 
 export class PiSessionService implements SessionRouteService {
   private readonly active = new Map<string, ActiveSession<PiSessionRuntime>>();
+  /** Read ordering per session runtime, keyed weakly so a replaced runtime is not retained. */
+  private readonly extensionReadRevisions = new WeakMap<PiAgentSession, number>();
   private readonly pendingSessionOpens = new Map<string, PendingSessionOpen>();
   private readonly activities = new Map<
     string,
@@ -2699,7 +2701,12 @@ export class PiSessionService implements SessionRouteService {
     // an entry appended after it is published with a higher seq and is replayed by the client,
     // while an entry already in the branch can only be replayed into an idempotent replacement.
     const seq = this.events.currentSeq(session.sessionId);
-    return { entries: sessionExtensionEntriesFromBranch(session.sessionManager.getBranch()), seq };
+    // Ordering between reads is a separate fact from the event watermark: the branch can change
+    // without publishing an event, so two reads can share a `seq`. The counter is keyed by the
+    // session runtime, so it does not leak and starts fresh when a runtime is replaced.
+    const readRevision = (this.extensionReadRevisions.get(session) ?? 0) + 1;
+    this.extensionReadRevisions.set(session, readRevision);
+    return { entries: sessionExtensionEntriesFromBranch(session.sessionManager.getBranch()), seq, readRevision };
   }
 
   /**

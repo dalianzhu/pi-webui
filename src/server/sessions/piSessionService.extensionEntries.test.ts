@@ -67,7 +67,24 @@ describe("PiSessionService extension entries", () => {
         },
       ],
       seq: 12,
+      readRevision: 1,
     });
+  });
+
+  // The event cursor orders events, not reads. A branch can change inside Pi's tree hooks without
+  // publishing anything, so a client needs this separate ordering to drop a superseded read.
+  it("orders reads independently of a standing event cursor", async () => {
+    const hub = new CapturingSessionEventHub();
+    hub.setSeq("ext-session", 7);
+    const service = serviceWith(hub, "ext-session", [customEntry("task-plan", { revision: 1 }, "e1")]);
+
+    const first = await service.extensionEntries(sessionRef("ext-session"));
+    const second = await service.extensionEntries(sessionRef("ext-session"));
+    await service.dispose();
+
+    expect(first.seq).toBe(second.seq);
+    expect(first.readRevision).toBe(1);
+    expect(second.readRevision).toBe(2);
   });
 
   it("publishes an extension entry event when Pi reports one", async () => {

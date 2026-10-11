@@ -1780,6 +1780,14 @@ export interface SessionExtensionEntriesResponse {
    * the rest, which is what makes the read and the live stream agree.
    */
   seq: number;
+  /**
+   * Ordering between reads of the same session, incremented for every read.
+   *
+   * `seq` orders events, not reads: a branch can change inside Pi's asynchronous tree hooks
+   * without publishing anything, so two reads of different branches can report the same `seq`.
+   * A client needs the read order to drop a read that a newer read has already superseded.
+   */
+  readRevision: number;
 }
 
 /**

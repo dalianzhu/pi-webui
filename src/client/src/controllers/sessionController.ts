@@ -251,6 +251,14 @@ export class SessionController {
    */
   private extensionCursor: { sessionId: string; seq: number } | undefined;
   /**
+   * Ordering of applied extension reads, which is not the same fact as the event cursor.
+   *
+   * A branch can change inside Pi's asynchronous tree hooks without publishing an event, so two
+   * reads can carry the same `seq` while describing different branches. Only the read order can
+   * tell which of them a client has already superseded.
+   */
+  private extensionReadRevision: { sessionId: string; revision: number } | undefined;
+  /**
    * Extension entry events observed after the applied snapshot's cursor.
    *
    * The cursor says what a snapshot covered, not that the client holds a complete prefix: a
@@ -1715,7 +1723,7 @@ export class SessionController {
           if (isLoadCancellation(error)) throw error;
           // A read that failed leaves the watermark untouched, so later entry events are applied
           // rather than being mistaken for already-included state.
-          return { entries: [], seq: undefined };
+          return { entries: [], seq: undefined, readRevision: undefined };
         }),
         this.notifications?.refreshSelectedSession(target.session, target.machineId) ?? Promise.resolve(),
       ]);
@@ -1753,31 +1761,31 @@ export class SessionController {
    * the client never saw (a resync after a disconnect); those events are replayed on top, so it
    * fills gaps without rolling anything back.
    *
-   * A read that another applied read has already superseded is ignored instead. The cursor only
-   * advances on reads, so this compares read against read, never read against event: the newer
-   * read was the complete recent window at its moment, and the session branch is shared, so the
-   * older one has no standing to add back entries the newer one excluded.
+   * A read that another applied read has already superseded is ignored instead, ordered by the
+   * read's own revision: the newer read was the complete recent window at its moment, and the
+   * session branch is shared, so the older one has no standing to add back entries the newer one
+   * excluded. The event cursor cannot order reads, because a branch can change without moving it.
    *
    * A read that failed reports no cursor and changes nothing.
    */
   private applyExtensionSnapshot(
     sessionId: string,
-    response: { entries: SessionExtensionEntry[]; seq: number | undefined },
+    response: { entries: SessionExtensionEntry[]; seq: number | undefined; readRevision: number | undefined },
   ): { sessionExtensionEntries?: SessionExtensionEntry[] } {
     const seq = response.seq;
-    if (seq === undefined) return {};
-    const cursor = this.extensionCursor;
-    const sameSession = cursor?.sessionId === sessionId;
+    // A read that failed carries neither a cursor nor an ordering, and changes nothing.
+    if (seq === undefined || response.readRevision === undefined) return {};
+    const appliedRevision = this.extensionReadRevision;
+    if (appliedRevision?.sessionId === sessionId && response.readRevision < appliedRevision.revision) return {};
     const observed = this.extensionJournal?.sessionId === sessionId ? this.extensionJournal.events : [];
     const replay = observed
       .filter((event) => event.seq !== undefined && event.seq > seq)
       .sort((left, right) => (left.seq ?? 0) - (right.seq ?? 0));
 
-    if (sameSession && seq < cursor.seq) return {};
-
     let entries = response.entries;
     for (const event of replay) entries = mergeExtensionEntry(entries, event.entry);
     this.extensionCursor = { sessionId, seq };
+    this.extensionReadRevision = { sessionId, revision: response.readRevision };
     // Keep exactly the events this snapshot does not cover, so a later one can bring them forward.
     this.extensionJournal = { sessionId, events: replay };
     return { sessionExtensionEntries: entries };
@@ -1813,6 +1821,7 @@ export class SessionController {
    */
   private resetExtensionBaseline(): void {
     this.extensionCursor = undefined;
+    this.extensionReadRevision = undefined;
     this.extensionJournal = undefined;
     this.extensionStreamGeneration += 1;
   }

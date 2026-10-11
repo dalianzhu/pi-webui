@@ -54,7 +54,13 @@ interface HarnessOptions {
 function createController(options: HarnessOptions = {}) {
   const socket = new EmitSocket();
   let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, selectedSession: oldSession, sessions: [oldSession] };
-  const extensionEntries = vi.fn(() => Promise.resolve({ entries: options.entries ?? [], seq: options.seq ?? 0 }));
+  // The server orders reads by a per-session revision, so the default mock does the same; a test
+  // that cares about ordering sets it explicitly.
+  let readRevision = 0;
+  const extensionEntries = vi.fn(() => {
+    readRevision += 1;
+    return Promise.resolve({ entries: options.entries ?? [], seq: options.seq ?? 0, readRevision });
+  });
   const messages = vi.fn(() => options.messages ?? Promise.resolve(emptyPage));
   const controller = new SessionController(
     () => state,
@@ -155,7 +161,7 @@ describe("SessionController extension entries", () => {
 
     harness.messages.mockImplementationOnce(() => messages.promise);
     harness.extensionEntries.mockImplementationOnce(() =>
-      Promise.resolve({ entries: [extensionEntry("e1", 1)], seq: 5 }),
+      Promise.resolve({ entries: [extensionEntry("e1", 1)], seq: 5, readRevision: 5 }),
     );
     const refreshing = harness.controller.refreshSelectedSession(oldSession.id);
     harness.socket.emit(entryEvent("e2", 2, 7));
@@ -270,7 +276,7 @@ describe("SessionController extension entries", () => {
     // e2 was written while disconnected, so only the resync read knows about it.
     harness.messages.mockImplementationOnce(() => messages.promise);
     harness.extensionEntries.mockImplementationOnce(() =>
-      Promise.resolve({ entries: [extensionEntry("e1", 1), extensionEntry("e2", 2)], seq: 6 }),
+      Promise.resolve({ entries: [extensionEntry("e1", 1), extensionEntry("e2", 2)], seq: 6, readRevision: 6 }),
     );
     const refreshing = harness.controller.refreshSelectedSession(oldSession.id);
     harness.socket.emit(entryEvent("e3", 3, 7));
@@ -287,20 +293,24 @@ describe("SessionController extension entries", () => {
     const firstMessages = deferred<typeof emptyPage>();
     const harness = createController({ entries: [extensionEntry("e1", 1)], seq: 5 });
     await harness.controller.selectSession(oldSession, { updateUrl: false });
+    const readsAfterJoin = harness.extensionEntries.mock.calls.length;
 
     harness.messages.mockImplementationOnce(() => firstMessages.promise);
     harness.extensionEntries.mockImplementationOnce(() =>
-      Promise.resolve({ entries: [extensionEntry("e1", 1), extensionEntry("e2", 2)], seq: 6 }),
+      Promise.resolve({ entries: [extensionEntry("e1", 1), extensionEntry("e2", 2)], seq: 6, readRevision: 6 }),
     );
     const inFlight = harness.controller.refreshSelectedSession(oldSession.id);
-    harness.socket.emit(entryEvent("e3", 3, 7));
+    // Let the first pass start, so the next request is queued as a trailing pass instead of
+    // replacing a pass that has not begun.
+    await settleMicrotasks();
+    expect(harness.extensionEntries.mock.calls.length).toBe(readsAfterJoin + 1);
 
-    // Requested while the first pass is still running, so the coordinator queues it as a trailing
-    // pass that reads a later snapshot.
+    harness.socket.emit(entryEvent("e3", 3, 7));
     harness.extensionEntries.mockImplementationOnce(() =>
       Promise.resolve({
         entries: [extensionEntry("e1", 1), extensionEntry("e2", 2), extensionEntry("e3", 3)],
         seq: 8,
+        readRevision: 8,
       }),
     );
     const trailing = harness.controller.refreshSelectedSession(oldSession.id);
@@ -308,6 +318,8 @@ describe("SessionController extension entries", () => {
     await inFlight;
     await trailing;
 
+    // The trailing pass ran and consumed its own read, so this covers both passes rather than one.
+    expect(harness.extensionEntries.mock.calls.length).toBe(readsAfterJoin + 2);
     expect(harness.state().sessionExtensionEntries.map((entry) => entry.entryId)).toEqual(["e1", "e2", "e3"]);
   });
 
@@ -320,9 +332,9 @@ describe("SessionController extension entries", () => {
 
     // Written after the join read but before the daemon subscription existed, so no live event
     // was delivered for it.
-    let barrierRead: Promise<{ entries: ReturnType<typeof extensionEntry>[]; seq: number }> | undefined;
+    let barrierRead: Promise<{ entries: ReturnType<typeof extensionEntry>[]; seq: number; readRevision: number }> | undefined;
     harness.extensionEntries.mockImplementationOnce(() => {
-      barrierRead = Promise.resolve({ entries: [extensionEntry("e1", 1), extensionEntry("e2", 2)], seq: 5 });
+      barrierRead = Promise.resolve({ entries: [extensionEntry("e1", 1), extensionEntry("e2", 2)], seq: 5, readRevision: 5 });
       return barrierRead;
     });
     harness.socket.emit({ type: "session.subscribed" });
@@ -341,7 +353,7 @@ describe("SessionController extension entries", () => {
     expect(harness.state().sessionExtensionEntries.map((entry) => entry.entryId)).toEqual(["e1"]);
 
     harness.extensionEntries.mockImplementationOnce(() =>
-      Promise.resolve({ entries: [extensionEntry("e1", 1), extensionEntry("e2", 2)], seq: 2 }),
+      Promise.resolve({ entries: [extensionEntry("e1", 1), extensionEntry("e2", 2)], seq: 2, readRevision: 2 }),
     );
     harness.socket.reconnect();
     await settleMicrotasks();
@@ -360,16 +372,16 @@ describe("SessionController extension entries", () => {
     await harness.controller.selectSession(oldSession, { updateUrl: false });
 
     // The barrier read is slower, and by the time it lands a full refresh has already reported e3.
-    const barrier = deferred<{ entries: ReturnType<typeof extensionEntry>[]; seq: number }>();
+    const barrier = deferred<{ entries: ReturnType<typeof extensionEntry>[]; seq: number; readRevision: number }>();
     harness.extensionEntries.mockImplementationOnce(() => barrier.promise);
     harness.socket.emit({ type: "session.subscribed" });
 
     harness.extensionEntries.mockImplementationOnce(() =>
-      Promise.resolve({ entries: [extensionEntry("e1", 1), extensionEntry("e2", 2), extensionEntry("e3", 3)], seq: 8 }),
+      Promise.resolve({ entries: [extensionEntry("e1", 1), extensionEntry("e2", 2), extensionEntry("e3", 3)], seq: 8, readRevision: 8 }),
     );
     await harness.controller.refreshSelectedSession(oldSession.id);
 
-    barrier.resolve({ entries: [extensionEntry("e1", 1), extensionEntry("e2", 2)], seq: 6 });
+    barrier.resolve({ entries: [extensionEntry("e1", 1), extensionEntry("e2", 2)], seq: 6, readRevision: 6 });
     await settle(barrier.promise);
 
     expect(harness.state().sessionExtensionEntries.map((entry) => entry.entryId)).toEqual(["e1", "e2", "e3"]);
@@ -382,7 +394,7 @@ describe("SessionController extension entries", () => {
     await harness.controller.selectSession(oldSession, { updateUrl: false });
 
     harness.messages.mockImplementationOnce(() => Promise.resolve(emptyPage));
-    harness.extensionEntries.mockImplementationOnce(() => Promise.resolve({ entries: [extensionEntry("e1", 1)], seq: 9 }));
+    harness.extensionEntries.mockImplementationOnce(() => Promise.resolve({ entries: [extensionEntry("e1", 1)], seq: 9, readRevision: 9 }));
     await harness.controller.refreshSelectedSession(oldSession.id);
 
     expect(harness.state().sessionExtensionEntries.map((entry) => entry.entryId)).toEqual(["e1"]);
@@ -397,7 +409,7 @@ describe("SessionController extension entries", () => {
     harness.socket.emit(entryEvent("e9", 9, 50));
     expect(harness.state().sessionExtensionEntries.map((entry) => entry.entryId)).toEqual(["e1", "e9"]);
 
-    harness.extensionEntries.mockImplementationOnce(() => Promise.resolve({ entries: [extensionEntry("e1", 1)], seq: 2 }));
+    harness.extensionEntries.mockImplementationOnce(() => Promise.resolve({ entries: [extensionEntry("e1", 1)], seq: 2, readRevision: 2 }));
     harness.socket.reconnect();
     await settleMicrotasks();
 
@@ -413,19 +425,19 @@ describe("SessionController extension entries", () => {
     expect(harness.state().sessionExtensionEntries.map((entry) => entry.entryId)).toEqual(["e1", "e2"]);
 
     // A read of the old branch is slow and still in flight.
-    const staleBranch = deferred<{ entries: ReturnType<typeof extensionEntry>[]; seq: number }>();
+    const staleBranch = deferred<{ entries: ReturnType<typeof extensionEntry>[]; seq: number; readRevision: number }>();
     harness.extensionEntries.mockImplementationOnce(() => staleBranch.promise);
     harness.socket.emit({ type: "session.subscribed" });
 
     // The branch moves elsewhere and a newer read reports only what is on it now.
     harness.messages.mockImplementationOnce(() => Promise.resolve(emptyPage));
     harness.extensionEntries.mockImplementationOnce(() =>
-      Promise.resolve({ entries: [extensionEntry("e1", 1)], seq: 9 }),
+      Promise.resolve({ entries: [extensionEntry("e1", 1)], seq: 9, readRevision: 9 }),
     );
     await harness.controller.refreshSelectedSession(oldSession.id);
     expect(harness.state().sessionExtensionEntries.map((entry) => entry.entryId)).toEqual(["e1"]);
 
-    staleBranch.resolve({ entries: [extensionEntry("e1", 1), extensionEntry("e2", 2)], seq: 6 });
+    staleBranch.resolve({ entries: [extensionEntry("e1", 1), extensionEntry("e2", 2)], seq: 6, readRevision: 6 });
     await settle(staleBranch.promise);
 
     expect(harness.state().sessionExtensionEntries.map((entry) => entry.entryId)).toEqual(["e1"]);
@@ -433,12 +445,48 @@ describe("SessionController extension entries", () => {
 
   // A reconnect can happen while the initial join is still running, so events buffered from the
   // previous stream must not be replayed onto the new one.
+  // The event cursor orders events, not reads: a branch can move inside Pi's tree hooks without
+  // publishing anything, so two reads can report the same cursor while describing different
+  // branches. Only the read order can drop the superseded one.
+  it("drops a superseded read that shares the event cursor", async () => {
+    const harness = createController({ entries: [extensionEntry("e1", 1), extensionEntry("e2", 2)], seq: 5 });
+    await harness.controller.selectSession(oldSession, { updateUrl: false });
+    const ids = () => harness.state().sessionExtensionEntries.map((entry) => entry.entryId);
+
+    // An older read of the branch that still carried e2, delayed.
+    const staleBranch = deferred<{ entries: ReturnType<typeof extensionEntry>[]; seq: number; readRevision: number }>();
+    harness.extensionEntries.mockImplementationOnce(() => staleBranch.promise);
+    harness.socket.emit({ type: "session.subscribed" });
+
+    // A later read of the branch where e2 is gone, reporting the same cursor.
+    harness.messages.mockImplementationOnce(() => Promise.resolve(emptyPage));
+    harness.extensionEntries.mockImplementationOnce(() =>
+      Promise.resolve({ entries: [extensionEntry("e1", 1)], seq: 5, readRevision: 3 }),
+    );
+    await harness.controller.refreshSelectedSession(oldSession.id);
+    expect(ids()).toEqual(["e1"]);
+
+    staleBranch.resolve({ entries: [extensionEntry("e1", 1), extensionEntry("e2", 2)], seq: 5, readRevision: 2 });
+    await settle(staleBranch.promise);
+
+    expect(ids()).toEqual(["e1"]);
+
+    // A newer read that shares the cursor must still be applied, so equal cursors cannot simply be
+    // rejected.
+    harness.extensionEntries.mockImplementationOnce(() =>
+      Promise.resolve({ entries: [extensionEntry("e1", 1), extensionEntry("e3", 3)], seq: 5, readRevision: 4 }),
+    );
+    await harness.controller.refreshSelectedSession(oldSession.id);
+
+    expect(ids()).toEqual(["e1", "e3"]);
+  });
+
   it("does not replay join-buffered events from the previous stream after a reconnect", async () => {
     const joinMessages = deferred<typeof emptyPage>();
     const harness = createController();
     // The join reads the old daemon's window, and the reconnect reads the new daemon's.
-    harness.extensionEntries.mockImplementationOnce(() => Promise.resolve({ entries: [extensionEntry("e1", 1)], seq: 49 }));
-    harness.extensionEntries.mockImplementationOnce(() => Promise.resolve({ entries: [extensionEntry("e2", 2)], seq: 2 }));
+    harness.extensionEntries.mockImplementationOnce(() => Promise.resolve({ entries: [extensionEntry("e1", 1)], seq: 49, readRevision: 49 }));
+    harness.extensionEntries.mockImplementationOnce(() => Promise.resolve({ entries: [extensionEntry("e2", 2)], seq: 2, readRevision: 2 }));
     harness.messages.mockImplementationOnce(() => joinMessages.promise);
 
     const selecting = harness.controller.selectSession(oldSession, { updateUrl: false });

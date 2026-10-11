@@ -597,6 +597,7 @@ export function parseSessionExtensionEntries(value: unknown): SessionExtensionEn
   return {
     entries: boundedArrayOf(record["entries"], parseSessionExtensionEntry, SESSION_EXTENSION_ENTRY_LIMIT, "entries"),
     seq: requireNonNegativeSafeInteger(record, "seq"),
+    readRevision: requireNonNegativeSafeInteger(record, "readRevision"),
   };
 }
 
