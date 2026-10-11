@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import Fastify, { type FastifyInstance } from "fastify";
 import fastifyWebsocket from "@fastify/websocket";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { WebSocket, type RawData } from "ws";
 import {
   SESSION_REORDER_CWD_MAX_LENGTH,
   SESSION_REORDER_LIMIT,
@@ -69,6 +70,17 @@ afterEach(async () => {
 });
 
 describe("session routes", () => {
+  it("announces a live subscription so the client can re-read extension state", async () => {
+    await app.listen({ host: "127.0.0.1", port: 0 });
+    const socket = new WebSocket(`${serverUrl(app)}/sessions/s1/events`);
+
+    try {
+      await expect(nextMessage(socket)).resolves.toBe(JSON.stringify({ type: "session.subscribed" }));
+    } finally {
+      socket.close();
+    }
+  });
+
   it("forwards strict legacy and plus session-start shapes", async () => {
     const routeApp = Fastify({ logger: false });
     await routeApp.register(fastifyWebsocket);
@@ -1621,4 +1633,23 @@ function sessionIdFromLookup(lookup: SessionRouteLookup): string {
 
 function unusedRouteMethod(name: string): Error {
   return new Error(`Route test did not expect ${name} to be called`);
+}
+
+function serverUrl(instance: FastifyInstance): string {
+  const address = instance.server.address();
+  if (address === null || typeof address === "string") throw new Error("Expected TCP server address");
+  return `ws://127.0.0.1:${String(address.port)}`;
+}
+
+function nextMessage(socket: WebSocket): Promise<string> {
+  return new Promise((resolve) => {
+    socket.once("message", (data) => { resolve(rawDataToString(data)); });
+  });
+}
+
+function rawDataToString(data: RawData): string {
+  if (typeof data === "string") return data;
+  if (data instanceof ArrayBuffer) return Buffer.from(data).toString("utf8");
+  if (Array.isArray(data)) return Buffer.concat(data).toString("utf8");
+  return data.toString("utf8");
 }

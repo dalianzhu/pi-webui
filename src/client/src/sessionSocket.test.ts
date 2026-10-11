@@ -94,6 +94,10 @@ describe("notification socket guards", () => {
     expect(parseSessionSocketEvent({ type: "command.output", level: "info", message: "legacy" })).toMatchObject({ type: "command.output" });
     expect(parseRealtimeSocketEvent({ type: "future.notification", payload: {} })).toBeUndefined();
   });
+
+  it("accepts the subscription barrier event that triggers an extension re-read", () => {
+    expect(parseSessionSocketEvent({ type: "session.subscribed" })).toEqual({ type: "session.subscribed" });
+  });
 });
 
 class FakeWebSocket {
