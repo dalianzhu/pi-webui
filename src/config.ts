@@ -2,7 +2,7 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
-import { MODEL_TIERS, type ModelTier, type ModelTierLadder, type PiWebUiAgentDirEnvSource, type PiWebUiConfigValues, type PiWebUiSessiondConfig, type PiWebUiSpeechInputCloudConfig, type PiWebUiSpeechInputConfig, type SpeechInputProviderPreference, type TierModelRef, type UtilityModelBinding, type UtilityModelSettings } from "./shared/apiTypes.js";
+import { MODEL_TIERS, UTILITY_MODEL_SESSION_ONLY, type ModelTier, type ModelTierLadder, type PiWebUiAgentDirEnvSource, type PiWebUiConfigValues, type PiWebUiSessiondConfig, type PiWebUiSpeechInputCloudConfig, type PiWebUiSpeechInputConfig, type SpeechInputProviderPreference, type TierModelRef, type UtilityModelBinding, type UtilityModelSettings } from "./shared/apiTypes.js";
 import { isPiCompanionCommand, usesPiCodingAgentStateCompatibility } from "./shared/activeAgentProfile.js";
 import { isPiWebUiPluginId, piWebUiPluginIdPattern } from "./shared/pluginIds.js";
 import { isKnownThinkingLevel } from "./shared/thinkingLevels.js";
@@ -549,8 +549,16 @@ export function parseUtilityModelsConfig(value: unknown, path: string): UtilityM
   }
 
   return {
-    ...(value["lightweight"] !== undefined ? { lightweight: parseUtilityModelBinding(value["lightweight"], "utilityModels.lightweight", path) } : {}),
-    ...(value["context"] !== undefined ? { context: parseUtilityModelBinding(value["context"], "utilityModels.context", path) } : {}),
+    ...(value["lightweight"] !== undefined
+      ? { lightweight: parseUtilityModelBinding(value["lightweight"], "utilityModels.lightweight", path) }
+      : {}),
+    ...(value["context"] !== undefined
+      ? {
+          context: value["context"] === UTILITY_MODEL_SESSION_ONLY
+            ? UTILITY_MODEL_SESSION_ONLY
+            : parseUtilityModelBinding(value["context"], "utilityModels.context", path),
+        }
+      : {}),
   };
 }
 

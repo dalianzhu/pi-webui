@@ -177,18 +177,23 @@ export interface TierModelRef {
 export const UTILITY_MODEL_SLOTS = ["lightweight", "context"] as const;
 export type UtilityModelSlot = (typeof UTILITY_MODEL_SLOTS)[number];
 
+export const UTILITY_MODEL_SESSION_ONLY = "session" as const;
+export type UtilityModelSessionOnly = typeof UTILITY_MODEL_SESSION_ONLY;
+export type UtilityModelContextSetting = UtilityModelBinding | UtilityModelSessionOnly;
+
 export interface UtilityModelBinding extends TierModelRef {
   thinkingLevel?: ThinkingLevel;
 }
 
 export interface UtilityModelSettings {
   lightweight?: UtilityModelBinding;
-  context?: UtilityModelBinding;
+  context?: UtilityModelContextSetting;
 }
 
-export type UtilityModelSettingsUpdate = Partial<
-  Record<UtilityModelSlot, UtilityModelBinding | null>
->;
+export interface UtilityModelSettingsUpdate {
+  lightweight?: UtilityModelBinding | null;
+  context?: UtilityModelContextSetting | null;
+}
 
 export interface UtilityModelOptionV1 {
   model: TierModelRef;
@@ -225,9 +230,16 @@ export interface UtilityModelSettingsResponseV2
   models: UtilityModelOptionV2[];
 }
 
+export interface UtilityModelSettingsResponseV3
+  extends UtilityModelSettingsResponseFields {
+  contractVersion: 3;
+  models: UtilityModelOptionV2[];
+}
+
 export type UtilityModelSettingsResponse =
   | UtilityModelSettingsResponseV1
-  | UtilityModelSettingsResponseV2;
+  | UtilityModelSettingsResponseV2
+  | UtilityModelSettingsResponseV3;
 
 export interface ModelTierEntry {
   model: TierModelRef;
