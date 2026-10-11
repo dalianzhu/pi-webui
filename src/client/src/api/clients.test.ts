@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PI_WEBUI_CAPABILITIES } from "../../../shared/capabilities";
 import type { HostSpeechSpeakRequest, ModelTierLadder, PiWebUiConfigValues, SpeechInputSettingsUpdate, StarterModelPolicyPreference, TerminalCommandRun, UtilityModelSettingsUpdate, Workspace } from "../../../shared/apiTypes";
+import { UTILITY_MODEL_SESSION_ONLY } from "../../../shared/apiTypes";
 import { SPEECH_INPUT_MAX_TRANSCRIPT_BYTES, type SpeechInputAudioMimeType } from "../../../shared/speechInputAudio";
 import { api, configApi, filesApi, learnedSkillsApi, machinesApi, memoryApi, modelTiersApi, modelsConfigApi, piPackagesApi, piWebUiApi, pluginsApi, projectsApi, sessionsApi, skillsConfigApi, speechInputApi, terminalsApi, ttsApi, utilityModelsApi, workspacesApi } from "./clients";
 
@@ -528,6 +529,55 @@ describe("Utility model settings API", () => {
     expect(requestBody(fetchCall(fetchMock, 2)[1])).toBe(JSON.stringify({
       settings: { lightweight: { provider: "openai", id: "gpt-small" } },
     }));
+  });
+
+  it("sends the session-only Context sentinel unchanged to a version 3 runtime under a nested base", async () => {
+    vi.stubEnv("BASE_URL", "./");
+    vi.stubGlobal("document", { baseURI: "https://pi.example.test/nested/pi-webui/" });
+    const response = utilityModelSettingsV3Response();
+    const update = {
+      lightweight: { provider: "openai", id: "gpt-small", thinkingLevel: "xhigh" },
+      context: UTILITY_MODEL_SESSION_ONLY,
+    } satisfies UtilityModelSettingsUpdate;
+    const fetchMock = stubSequenceFetch([jsonResponse(response), jsonResponse(response)]);
+
+    await expect(utilityModelsApi.settings("remote /?")).resolves.toEqual(response);
+    await expect(utilityModelsApi.save(update, 3, "remote /?")).resolves.toEqual(response);
+
+    expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
+      "https://pi.example.test/nested/pi-webui/api/machines/remote%20%2F%3F/utility-models",
+      "https://pi.example.test/nested/pi-webui/api/machines/remote%20%2F%3F/utility-models",
+    ]);
+    expect(fetchCall(fetchMock, 1)[1]?.method).toBe("PUT");
+    expect(requestBody(fetchCall(fetchMock, 1)[1])).toBe(JSON.stringify({
+      settings: {
+        lightweight: { provider: "openai", id: "gpt-small", thinkingLevel: "xhigh" },
+        context: "session",
+      },
+    }));
+  });
+
+  it("accepts a version 3 sentinel response from the settings endpoint", async () => {
+    vi.stubEnv("BASE_URL", "./");
+    vi.stubGlobal("document", { baseURI: "https://pi.example.test/nested/pi-webui/" });
+    const response = utilityModelSettingsV3Response();
+    stubSequenceFetch([jsonResponse(response)]);
+
+    const parsed = await utilityModelsApi.settings("remote /?");
+
+    expect(parsed).toEqual(response);
+    expect(parsed.settings.context).toBe(UTILITY_MODEL_SESSION_ONLY);
+  });
+
+  it("throws before any request when a version 1 runtime would receive the sentinel", () => {
+    vi.stubEnv("BASE_URL", "./");
+    vi.stubGlobal("document", { baseURI: "https://pi.example.test/nested/pi-webui/" });
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(() => utilityModelsApi.save({ context: UTILITY_MODEL_SESSION_ONLY }, 1, "local"))
+      .toThrow(/contract version 1/u);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
@@ -1421,6 +1471,28 @@ function utilityModelSettingsV2Response() {
     settings: {
       lightweight: { provider: "openai", id: "gpt-5.6-luna", thinkingLevel: "max" },
       context: { provider: "openai", id: "org/gpt-5.6-luna/medium" },
+    },
+    models: [
+      {
+        model: { provider: "openai", id: "gpt-5.6-luna" },
+        name: "Luna",
+        thinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+      },
+    ],
+    slots: {
+      lightweight: { valid: true },
+      context: { valid: true },
+    },
+    valid: true,
+  };
+}
+
+function utilityModelSettingsV3Response() {
+  return {
+    contractVersion: 3 as const,
+    settings: {
+      lightweight: { provider: "openai", id: "gpt-5.6-luna", thinkingLevel: "max" },
+      context: "session",
     },
     models: [
       {

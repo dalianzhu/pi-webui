@@ -1,6 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PI_WEBUI_CAPABILITIES } from "../../../shared/capabilities";
-import type { UtilityModelSettings, UtilityModelSettingsResponse, UtilityModelSettingsResponseV2, UtilityModelSettingsUpdate } from "../../../shared/apiTypes";
+import type {
+  UtilityModelSettings,
+  UtilityModelSettingsResponse,
+  UtilityModelSettingsResponseV1,
+  UtilityModelSettingsResponseV2,
+  UtilityModelSettingsResponseV3,
+  UtilityModelSettingsUpdate,
+} from "../../../shared/apiTypes";
+import { UTILITY_MODEL_SESSION_ONLY } from "../../../shared/apiTypes";
 import { utilityModelsApi } from "../api";
 import { activeSettingsPanelTag, SettingsDialog } from "./SettingsDialog";
 import {
@@ -40,6 +48,38 @@ function response(overrides: Partial<UtilityModelSettingsResponseV2> = {}): Util
 
 function responseV2(overrides: Partial<UtilityModelSettingsResponseV2> = {}): UtilityModelSettingsResponseV2 {
   return response(overrides);
+}
+
+function utilityModelSettingsV3SentinelResponse(): UtilityModelSettingsResponseV3 {
+  return {
+    contractVersion: 3,
+    settings: {
+      lightweight: { ...lightweight, thinkingLevel: "max" },
+      context: UTILITY_MODEL_SESSION_ONLY,
+    },
+    models: [
+      { model: lightweight, name: "Small", thinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"] },
+      { model: context, name: "Context", thinkingLevels: ["off", "low", "medium"] },
+    ],
+    slots: {
+      lightweight: { valid: true },
+      context: { valid: true },
+    },
+    valid: true,
+  };
+}
+
+function utilityModelSettingsV1Response(): UtilityModelSettingsResponseV1 {
+  return {
+    contractVersion: 1,
+    settings: {},
+    models: [{ model: lightweight, name: "Small" }],
+    slots: {
+      lightweight: { valid: true },
+      context: { valid: true },
+    },
+    valid: true,
+  };
 }
 
 afterEach(() => {
@@ -212,5 +252,40 @@ describe("settings-dialog utility model machine targeting", () => {
     expect(getDialogProperty(dialog, "utilityModelsConfigResponse")).toBeUndefined();
     expect(loadUtilityModels).toHaveBeenCalledWith(expect.objectContaining({ id: remoteMachine.id }));
     expect(loadModelTiers).not.toHaveBeenCalled();
+  });
+
+  it("loads and saves the v3 sentinel update shape with contract version 3", async () => {
+    stubWindowTimers();
+    const loaded = utilityModelSettingsV3SentinelResponse();
+    const confirmed = utilityModelSettingsV3SentinelResponse();
+    const settingsSpy = vi.spyOn(utilityModelsApi, "settings").mockResolvedValue(loaded);
+    const saveSpy = vi.spyOn(utilityModelsApi, "save").mockResolvedValue(confirmed);
+    const dialog = new SettingsDialog();
+
+    await callDialogPromise(dialog, "loadUtilityModelsForTarget");
+    expect(settingsSpy.mock.calls).toEqual([["local"]]);
+
+    await callDialogPromise(dialog, "saveUtilityModels", {
+      lightweight: null,
+      context: UTILITY_MODEL_SESSION_ONLY,
+    });
+
+    expect(saveSpy.mock.calls).toEqual([
+      [{ lightweight: null, context: UTILITY_MODEL_SESSION_ONLY }, 3, "local"],
+    ]);
+    expect(getDialogProperty(dialog, "utilityModelsConfigResponse")).toBe(confirmed);
+  });
+
+  it("surfaces the v1 projection guard without sending a request", async () => {
+    stubWindowTimers();
+    const dialog = new SettingsDialog();
+    setDialogProperty(dialog, "utilityModelsConfigResponse", utilityModelSettingsV1Response());
+
+    await callDialogPromise(dialog, "saveUtilityModels", { context: UTILITY_MODEL_SESSION_ONLY });
+
+    expect(String(getDialogProperty(dialog, "utilityModelsError"))).toContain(
+      "Cannot save the session-only Context model to a contract version 1 runtime",
+    );
+    expect(getDialogProperty(dialog, "saving")).toBe(false);
   });
 });
