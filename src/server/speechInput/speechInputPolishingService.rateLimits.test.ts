@@ -39,6 +39,7 @@ function candidateResolver() {
   return {
     inspect: vi.fn().mockResolvedValue({
       candidates: [{ model, thinkingLevel: "off", slot: "lightweight" }],
+      sessionModelOnly: false,
     }),
     configuredCandidates: vi.fn().mockResolvedValue([
       { model, thinkingLevel: "off", slot: "lightweight" },

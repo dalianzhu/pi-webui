@@ -29,7 +29,7 @@ function utilityResolverFor(
   candidates: readonly ResolvedUtilityModel<ReturnType<typeof testModel>>[],
 ) {
   return {
-    inspect: vi.fn().mockResolvedValue({ candidates }),
+    inspect: vi.fn().mockResolvedValue({ candidates, sessionModelOnly: false }),
     configuredCandidates: vi.fn().mockResolvedValue(candidates),
   };
 }
