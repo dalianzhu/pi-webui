@@ -1,9 +1,10 @@
 import { isKnownThinkingLevel, type ThinkingLevel } from "../../shared/thinkingLevels.js";
 import {
   UTILITY_MODEL_SLOTS,
+  UTILITY_MODEL_SESSION_ONLY,
   type UtilityModelOptionV2,
   type UtilityModelSettings,
-  type UtilityModelSettingsResponseV2,
+  type UtilityModelSettingsResponseV3,
   type UtilityModelSettingsUpdate,
   type UtilityModelSlot,
   type UtilityModelSlotValidation,
@@ -33,8 +34,8 @@ export interface UtilityModelSettingsServiceDependencies<TModel extends UtilityM
 }
 
 export interface UtilityModelSettingsService {
-  inspect(): Promise<UtilityModelSettingsResponseV2>;
-  update(patch: UtilityModelSettingsUpdate): Promise<UtilityModelSettingsResponseV2>;
+  inspect(): Promise<UtilityModelSettingsResponseV3>;
+  update(patch: UtilityModelSettingsUpdate): Promise<UtilityModelSettingsResponseV3>;
 }
 
 /**
@@ -46,7 +47,7 @@ export function createUtilityModelSettingsService<TModel extends UtilityModelSet
 ): UtilityModelSettingsService {
   let updateQueue: Promise<void> = Promise.resolve();
 
-  const inspect = async (): Promise<UtilityModelSettingsResponseV2> => {
+  const inspect = async (): Promise<UtilityModelSettingsResponseV3> => {
     const models = await refreshedSnapshot();
     return responseFor(deps.loadConfig(), models);
   };
@@ -66,7 +67,7 @@ export function createUtilityModelSettingsService<TModel extends UtilityModelSet
     return queuedUpdate;
   }
 
-  async function updateSettings(patch: UtilityModelSettingsUpdate): Promise<UtilityModelSettingsResponseV2> {
+  async function updateSettings(patch: UtilityModelSettingsUpdate): Promise<UtilityModelSettingsResponseV3> {
     const current = deps.loadConfig();
     const next: UtilityModelSettings = current.utilityModelsError === undefined
       ? { ...current.utilityModels }
@@ -97,11 +98,11 @@ export function createUtilityModelSettingsService<TModel extends UtilityModelSet
     return deps.modelRuntime.getAvailableSnapshot();
   }
 
-  function responseFor(config: UtilityModelSettingsConfig, models: readonly TModel[]): UtilityModelSettingsResponseV2 {
+  function responseFor(config: UtilityModelSettingsConfig, models: readonly TModel[]): UtilityModelSettingsResponseV3 {
     const modelOptions = models.map(modelOptionFor);
     if (config.utilityModelsError !== undefined) {
       return {
-        contractVersion: 2,
+        contractVersion: 3,
         configError: config.utilityModelsError,
         settings: {},
         models: modelOptions,
@@ -113,7 +114,7 @@ export function createUtilityModelSettingsService<TModel extends UtilityModelSet
     const settings = config.utilityModels ?? {};
     const slots = validationSlots(settings, models);
     return {
-      contractVersion: 2,
+      contractVersion: 3,
       settings,
       models: modelOptions,
       slots,
@@ -143,6 +144,7 @@ export function createUtilityModelSettingsService<TModel extends UtilityModelSet
   function validationFor(slot: UtilityModelSlot, settings: UtilityModelSettings, models: readonly TModel[]): UtilityModelSlotValidation {
     const configured = settings[slot];
     if (configured === undefined) return { valid: true };
+    if (configured === UTILITY_MODEL_SESSION_ONLY) return { valid: true };
 
     const available = models.find((model) => model.provider === configured.provider && model.id === configured.id);
     if (available === undefined) {
