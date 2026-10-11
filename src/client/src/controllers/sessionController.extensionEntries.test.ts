@@ -17,6 +17,25 @@ const entryEvent = (entryId: string, revision: number, seq: number): SessionUiEv
   seq,
 });
 
+/**
+ * Let a fire-and-forget read settle: awaiting the read's own promise queues this continuation
+ * after the controller's, and one microtask lets that continuation apply its state.
+ */
+const settle = async (read: Promise<unknown>) => {
+  await read;
+  await Promise.resolve();
+};
+
+/**
+ * Let scheduled work run to completion without depending on wall-clock timing.
+ *
+ * A reconnect schedules its read through the refresh coordinator, so the read is issued a few
+ * microtasks later; there is no promise to await for that path.
+ */
+const settleMicrotasks = async (turns = 10) => {
+  for (let turn = 0; turn < turns; turn += 1) await Promise.resolve();
+};
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((settle) => { resolve = settle; });
@@ -27,6 +46,8 @@ interface HarnessOptions {
   entries?: ReturnType<typeof extensionEntry>[];
   /** Watermark the extension read reports. `undefined` models an older daemon with no route. */
   seq?: number;
+  /** Watermark the transcript snapshot reports, which the extension cursor must not reuse. */
+  transcriptSeq?: number;
   messages?: Promise<typeof emptyPage>;
 }
 
@@ -46,7 +67,7 @@ function createController(options: HarnessOptions = {}) {
         ...defaultApi,
         messages,
         status: vi.fn(() => Promise.resolve(status(oldSession.id))),
-        streamSnapshot: vi.fn(() => Promise.resolve({ seq: 0, partial: null })),
+        streamSnapshot: vi.fn(() => Promise.resolve({ seq: options.transcriptSeq ?? 0, partial: null })),
         extensionEntries,
       },
     },
@@ -89,12 +110,15 @@ describe("SessionController extension entries", () => {
     const harness = createController({
       entries: [extensionEntry("e1", 1)],
       seq: 5,
+      // The transcript snapshot really lands at 7 here, so a shared watermark would drop the
+      // event below even though the extension read (seq 5) never contained it.
+      transcriptSeq: 7,
       messages: messages.promise,
     });
 
     const selecting = harness.controller.selectSession(oldSession, { updateUrl: false });
-    // The transcript snapshot lands at seq 7, so the old shared watermark would have dropped this
-    // event even though the extension read (seq 5) never contained it.
+    // Published after the extension read, so the extension cursor (5) keeps it even though the
+    // transcript watermark (7) covers it.
     harness.socket.emit(entryEvent("e2", 2, 7));
     messages.resolve(emptyPage);
     await selecting;
@@ -137,24 +161,6 @@ describe("SessionController extension entries", () => {
     harness.socket.emit(entryEvent("e2", 2, 7));
     messages.resolve(emptyPage);
     await refreshing;
-
-    expect(harness.state().sessionExtensionEntries.map((entry) => entry.entryId)).toEqual(["e1", "e2"]);
-  });
-
-  // The hub does not replay, and the join read can finish before the subscription is live, so an
-  // entry written in that window is only recovered by a read once the subscription exists.
-  it("re-reads extension entries when the subscription becomes live", async () => {
-    const harness = createController({ entries: [extensionEntry("e1", 1)], seq: 5 });
-    await harness.controller.selectSession(oldSession, { updateUrl: false });
-    expect(harness.state().sessionExtensionEntries.map((entry) => entry.entryId)).toEqual(["e1"]);
-
-    // Persisted after the join read, before the subscription: no live event is delivered for it.
-    harness.extensionEntries.mockImplementationOnce(() =>
-      Promise.resolve({ entries: [extensionEntry("e1", 1), extensionEntry("e2", 2)], seq: 5 }),
-    );
-    harness.socket.open();
-    await Promise.resolve();
-    await Promise.resolve();
 
     expect(harness.state().sessionExtensionEntries.map((entry) => entry.entryId)).toEqual(["e1", "e2"]);
   });
@@ -252,6 +258,156 @@ describe("SessionController extension entries", () => {
     expect(entries).toHaveLength(SESSION_EXTENSION_ENTRY_LIMIT);
     expect(entries.filter((entry) => entry.entryId === "e10")).toEqual([extensionEntry("e10", 99)]);
     expect(entries[0]?.entryId).toBe("e0");
+  });
+
+  // A resync snapshot can carry entries the client missed while disconnected, so it must still be
+  // applied even when an entry event has moved past its cursor.
+  it("applies a resync snapshot that fills a gap while keeping later entry events", async () => {
+    const messages = deferred<typeof emptyPage>();
+    const harness = createController({ entries: [extensionEntry("e1", 1)], seq: 5 });
+    await harness.controller.selectSession(oldSession, { updateUrl: false });
+
+    // e2 was written while disconnected, so only the resync read knows about it.
+    harness.messages.mockImplementationOnce(() => messages.promise);
+    harness.extensionEntries.mockImplementationOnce(() =>
+      Promise.resolve({ entries: [extensionEntry("e1", 1), extensionEntry("e2", 2)], seq: 6 }),
+    );
+    const refreshing = harness.controller.refreshSelectedSession(oldSession.id);
+    harness.socket.emit(entryEvent("e3", 3, 7));
+    messages.resolve(emptyPage);
+    await refreshing;
+
+    expect(harness.state().sessionExtensionEntries.map((entry) => entry.entryId)).toEqual(["e1", "e2", "e3"]);
+  });
+
+  // Each refresh can be overtaken by a newer event, so "a trailing pass will fix it" is not
+  // enough: the gap entry has to survive both passes.
+  it("keeps a gap entry across two overtaken refreshes", async () => {
+    const first = deferred<typeof emptyPage>();
+    const second = deferred<typeof emptyPage>();
+    const harness = createController({ entries: [extensionEntry("e1", 1)], seq: 5 });
+    await harness.controller.selectSession(oldSession, { updateUrl: false });
+
+    harness.messages.mockImplementationOnce(() => first.promise);
+    harness.extensionEntries.mockImplementationOnce(() =>
+      Promise.resolve({ entries: [extensionEntry("e1", 1), extensionEntry("e2", 2)], seq: 6 }),
+    );
+    const refreshing = harness.controller.refreshSelectedSession(oldSession.id);
+    harness.socket.emit(entryEvent("e3", 3, 7));
+    first.resolve(emptyPage);
+    await refreshing;
+
+    harness.messages.mockImplementationOnce(() => second.promise);
+    harness.extensionEntries.mockImplementationOnce(() =>
+      Promise.resolve({
+        entries: [extensionEntry("e1", 1), extensionEntry("e2", 2), extensionEntry("e3", 3)],
+        seq: 8,
+      }),
+    );
+    const secondRefreshing = harness.controller.refreshSelectedSession(oldSession.id);
+    harness.socket.emit(entryEvent("e4", 4, 9));
+    second.resolve(emptyPage);
+    await secondRefreshing;
+
+    expect(harness.state().sessionExtensionEntries.map((entry) => entry.entryId)).toEqual([
+      "e1",
+      "e2",
+      "e3",
+      "e4",
+    ]);
+  });
+
+  // The subscription reaching the daemon is what makes a read complete, and the browser cannot
+  // observe that from its own socket alone, so the daemon reports it.
+  it("re-reads extension entries once the subscription is reported live", async () => {
+    const harness = createController({ entries: [extensionEntry("e1", 1)], seq: 5 });
+    await harness.controller.selectSession(oldSession, { updateUrl: false });
+    expect(harness.state().sessionExtensionEntries.map((entry) => entry.entryId)).toEqual(["e1"]);
+
+    // Written after the join read but before the daemon subscription existed, so no live event
+    // was delivered for it.
+    let barrierRead: Promise<{ entries: ReturnType<typeof extensionEntry>[]; seq: number }> | undefined;
+    harness.extensionEntries.mockImplementationOnce(() => {
+      barrierRead = Promise.resolve({ entries: [extensionEntry("e1", 1), extensionEntry("e2", 2)], seq: 5 });
+      return barrierRead;
+    });
+    harness.socket.emit({ type: "session.subscribed" });
+
+    expect(barrierRead).toBeDefined();
+    await settle(barrierRead ?? Promise.resolve());
+
+    expect(harness.state().sessionExtensionEntries.map((entry) => entry.entryId)).toEqual(["e1", "e2"]);
+  });
+
+  // Sequence numbers restart with the session daemon, so a baseline from the previous stream must
+  // not keep rejecting the new stream's numbers.
+  it("re-establishes the baseline after a reconnect to a restarted daemon", async () => {
+    const harness = createController({ entries: [extensionEntry("e1", 1)], seq: 50 });
+    await harness.controller.selectSession(oldSession, { updateUrl: false });
+    expect(harness.state().sessionExtensionEntries.map((entry) => entry.entryId)).toEqual(["e1"]);
+
+    harness.extensionEntries.mockImplementationOnce(() =>
+      Promise.resolve({ entries: [extensionEntry("e1", 1), extensionEntry("e2", 2)], seq: 2 }),
+    );
+    harness.socket.reconnect();
+    await settleMicrotasks();
+
+    expect(harness.state().sessionExtensionEntries.map((entry) => entry.entryId)).toEqual(["e1", "e2"]);
+
+    // And a live event from the new stream, below the old baseline, still applies.
+    harness.socket.emit(entryEvent("e3", 3, 3));
+    expect(harness.state().sessionExtensionEntries.map((entry) => entry.entryId)).toEqual(["e1", "e2", "e3"]);
+  });
+
+  // A reconnect refreshes while the subscription barrier also reads, so the older read can land
+  // last. It must fill its gaps without rolling the newer read's entries back.
+  it("keeps entries from a newer read when an older read lands after it", async () => {
+    const harness = createController({ entries: [extensionEntry("e1", 1)], seq: 5 });
+    await harness.controller.selectSession(oldSession, { updateUrl: false });
+
+    // The barrier read is slower, and by the time it lands a full refresh has already reported e3.
+    const barrier = deferred<{ entries: ReturnType<typeof extensionEntry>[]; seq: number }>();
+    harness.extensionEntries.mockImplementationOnce(() => barrier.promise);
+    harness.socket.emit({ type: "session.subscribed" });
+
+    harness.extensionEntries.mockImplementationOnce(() =>
+      Promise.resolve({ entries: [extensionEntry("e1", 1), extensionEntry("e2", 2), extensionEntry("e3", 3)], seq: 8 }),
+    );
+    await harness.controller.refreshSelectedSession(oldSession.id);
+
+    barrier.resolve({ entries: [extensionEntry("e1", 1), extensionEntry("e2", 2)], seq: 6 });
+    await settle(barrier.promise);
+
+    expect(harness.state().sessionExtensionEntries.map((entry) => entry.entryId)).toEqual(["e1", "e2", "e3"]);
+  });
+
+  // The merge above is scoped to one session and one branch: a newer read is authoritative, so
+  // entries that are no longer on the branch must not be kept.
+  it("drops entries a newer read does not report", async () => {
+    const harness = createController({ entries: [extensionEntry("e1", 1), extensionEntry("e2", 2)], seq: 5 });
+    await harness.controller.selectSession(oldSession, { updateUrl: false });
+
+    harness.messages.mockImplementationOnce(() => Promise.resolve(emptyPage));
+    harness.extensionEntries.mockImplementationOnce(() => Promise.resolve({ entries: [extensionEntry("e1", 1)], seq: 9 }));
+    await harness.controller.refreshSelectedSession(oldSession.id);
+
+    expect(harness.state().sessionExtensionEntries.map((entry) => entry.entryId)).toEqual(["e1"]);
+  });
+
+  // A restarted daemon starts its sequence numbers again, so events journalled under the previous
+  // stream must not be replayed onto the new one: the new daemon is the authority on its session.
+  it("does not replay entries journalled before a daemon restart", async () => {
+    const harness = createController({ entries: [extensionEntry("e1", 1)], seq: 5 });
+    await harness.controller.selectSession(oldSession, { updateUrl: false });
+    // An entry the previous stream reported and the new daemon does not.
+    harness.socket.emit(entryEvent("e9", 9, 50));
+    expect(harness.state().sessionExtensionEntries.map((entry) => entry.entryId)).toEqual(["e1", "e9"]);
+
+    harness.extensionEntries.mockImplementationOnce(() => Promise.resolve({ entries: [extensionEntry("e1", 1)], seq: 2 }));
+    harness.socket.reconnect();
+    await settleMicrotasks();
+
+    expect(harness.state().sessionExtensionEntries.map((entry) => entry.entryId)).toEqual(["e1"]);
   });
 
   it("clears extension entries when the session is deselected", async () => {

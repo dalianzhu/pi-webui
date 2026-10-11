@@ -1742,7 +1742,7 @@ export interface SessionExtensionEntry {
   customType: string;
   /** Extension-owned payload. Opaque to PI WEBUI and never interpreted by it. */
   data?: unknown;
-  /** Set when `data` exceeded the forwarding limit, so no payload is included. */
+  /** Set when `data` could not be forwarded: it was too large, or JSON cannot represent it. */
   dataOmitted?: true;
   /** Session entry id. Pi always records one; a malformed entry without an id reports "". */
   entryId: string;
@@ -1825,6 +1825,7 @@ type SessionUiEventBody =
   | { type: "command.output"; level: "info" | "success" | "error"; message: string; notificationId?: string }
   | { type: "session.extensionEntry"; entry: SessionExtensionEntry }
   | SessionNotificationInboxEvent
+  | { type: "session.subscribed" }
   | { type: "session.error"; message: string }
   | { type: "session.name"; sessionId: string; name?: string }
   | { type: "session.created"; session: SessionInfo }

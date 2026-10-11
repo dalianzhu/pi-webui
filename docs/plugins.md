@@ -1139,7 +1139,7 @@ Each entry provides:
 
 The list is bounded: only the most recent entries per session are forwarded. Treat it as a recent window over the extension's state, not as complete history, and read the extension's own latest entry to derive current state.
 
-Entries update as the extension writes them, so a panel or label re-renders without a page reload. The state is refreshed when the subscription becomes live and on each session refresh, so a failed read leaves the previous state in place rather than clearing it. Callback-based contributions such as workspace labels still return synchronously; build labels from this state through the same plugin-owned cache pattern used for other async reads.
+Entries update as the extension writes them, so a panel or label re-renders without a page reload. The host also re-reads them when the session daemon confirms the event subscription is live and on each session refresh, because a read taken before the subscription can miss what was written in between. A failed read leaves the previous state in place rather than clearing it. Callback-based contributions such as workspace labels still return synchronously; build labels from this state through the same plugin-owned cache pattern used for other async reads.
 
 ## Private and experimental PI WEBUI APIs
 

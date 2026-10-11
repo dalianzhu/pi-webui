@@ -30,6 +30,22 @@ describe("session extension entries parser", () => {
     expect(parseSessionExtensionEntries({ entries: [{ customType: "task-plan", entryId: "e1", timestamp: "now" }], seq: 1 }).entries[0]).not.toHaveProperty("data");
   });
 
+  it("lets the omission flag win over a payload that is also present", () => {
+    const parsed = parseSessionExtensionEntries({
+      entries: [{ customType: "task-plan", entryId: "e1", timestamp: "now", data: { revision: 1 }, dataOmitted: true }],
+      seq: 1,
+    });
+    expect(parsed.entries[0]).toEqual({ customType: "task-plan", entryId: "e1", timestamp: "now", dataOmitted: true });
+  });
+
+  it("treats an explicit undefined payload as no payload", () => {
+    const parsed = parseSessionExtensionEntries({
+      entries: [{ customType: "task-plan", entryId: "e1", timestamp: "now", data: undefined }],
+      seq: 1,
+    });
+    expect(parsed.entries[0]).not.toHaveProperty("data");
+  });
+
   it("rejects a non-custom payload and a blank custom type", () => {
     expect(() => parseSessionExtensionEntries({ entries: [{ customType: "", entryId: "e1", timestamp: "now" }], seq: 1 })).toThrow(/customType/);
     expect(() => parseSessionExtensionEntries({ entries: [{ entryId: "e1", timestamp: "now" }], seq: 1 })).toThrow(/customType/);

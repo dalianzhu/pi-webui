@@ -179,6 +179,28 @@ type SelectedModelPolicyStateReset = Pick<AppState, "modelPolicy" | "isLoadingMo
  * holds and reports `overflowed`, leaving the caller to recover the tail from a
  * snapshot instead of paying for the burst.
  */
+type ExtensionEntryEvent = Extract<SessionUiEvent, { type: "session.extensionEntry" }>;
+
+/**
+ * Add or replace one extension entry in a list, newest last and bounded.
+ *
+ * Entries are keyed by their session entry id, so a repeat updates in place instead of evicting
+ * the oldest entry to make room for a duplicate. An entry Pi recorded without an id is appended:
+ * treating every id-less entry as the same entry would drop state.
+ */
+function mergeExtensionEntry(
+  entries: SessionExtensionEntry[],
+  entry: SessionExtensionEntry,
+): SessionExtensionEntry[] {
+  const index =
+    entry.entryId === "" ? -1 : entries.findIndex((candidate) => candidate.entryId === entry.entryId);
+  const merged =
+    index === -1
+      ? [...entries, entry]
+      : entries.map((candidate, position) => (position === index ? entry : candidate));
+  return merged.length > SESSION_EXTENSION_ENTRY_LIMIT ? merged.slice(merged.length - SESSION_EXTENSION_ENTRY_LIMIT) : merged;
+}
+
 class JoinEventCollector {
   private events: SessionUiEvent[] = [];
   private overflow = false;
@@ -227,7 +249,24 @@ export class SessionController {
    * whether a given entry is already included. This cursor is what decides whether an entry
    * event still has to be applied.
    */
-  private extensionWatermark: { sessionId: string; seq: number } | undefined;
+  private extensionCursor: { sessionId: string; seq: number } | undefined;
+  /**
+   * Extension entry events observed after the applied snapshot's cursor.
+   *
+   * The cursor says what a snapshot covered, not that the client holds a complete prefix: a
+   * resync can fill entries the client missed while disconnected, and events that arrived after
+   * that snapshot must survive its application. Keeping them lets a snapshot be applied (which
+   * fills the gaps) and then be brought forward instead of being dropped as "older".
+   */
+  private extensionJournal: { sessionId: string; events: ExtensionEntryEvent[] } | undefined;
+  /**
+   * Identifies the event stream the extension baseline belongs to.
+   *
+   * Event sequence numbers restart when the session daemon restarts, so a baseline from a
+   * previous stream is meaningless in the new one. Bumping this on a new connection discards the
+   * old baseline and lets responses from the old stream land harmlessly.
+   */
+  private extensionStreamGeneration = 0;
   private sessionReorderInFlight = false;
   private disposed = false;
   // Join-time stream watermark for the selected session. `seq` is the
@@ -326,13 +365,13 @@ export class SessionController {
     this.socket.close();
     this.notifications?.clearSelectedSession();
     this.streamWatermark = undefined;
-    this.extensionWatermark = undefined;
+    this.resetExtensionBaseline();
     this.clearPendingUpdates();
     // Note: sendingPrompts is intentionally NOT cleared here. Deselecting a
     // session must not cancel the in-flight upload indicator of the session
     // that is still sending; the per-session entry is cleared by send()'s
     // finally block when the request settles.
-    this.extensionWatermark = undefined;
+    this.resetExtensionBaseline();
     this.setState({ selectedSession: undefined, messages: [], sessionExtensionEntries: [], messagePageStart: 0, messagePageEnd: 0, messagePageTotal: 0, isLoadingEarlierMessages: false, status: undefined, activity: undefined, availableThinkingLevels: [], ...this.clearSelectedModelPolicyState(), treeDialog: undefined });
   }
 
@@ -474,7 +513,7 @@ export class SessionController {
     this.selectionLoad.restart();
     this.socket.close();
     this.streamWatermark = undefined;
-    this.extensionWatermark = undefined;
+    this.resetExtensionBaseline();
     this.clearPendingUpdates();
     const machineId = selectedMachineId(this.getState());
     this.notifications?.prepareSelectedSession(session, machineId);
@@ -511,14 +550,13 @@ export class SessionController {
       this.socket.connect(
         session,
         (event) => { joinBuffer.push(event); },
-        () => { void this.refreshSelectedSession(session.id); },
-        machineId,
         () => {
-          void this.notifications?.refreshSelectedSession(session, machineId);
-          // The subscription becomes live asynchronously, and the hub does not replay, so an
-          // entry written after the join read and before the subscription would never arrive.
-          void this.refreshSelectedExtensionEntries();
+          // A reconnect may land on a restarted daemon whose sequence numbers begin again.
+          this.resetExtensionBaseline();
+          void this.refreshSelectedSession(session.id);
         },
+        machineId,
+        () => { void this.notifications?.refreshSelectedSession(session, machineId); },
       );
       await this.requestSelectedSessionRefresh(refreshTarget);
       if (!this.isCurrentRefreshTarget(refreshTarget)) return;
@@ -1649,6 +1687,7 @@ export class SessionController {
       // already belong to a superseded load, which would cancel the live
       // selection's own refresh.
       const signal = this.selectionLoad.signal;
+      const extensionGeneration = this.extensionStreamGeneration;
       const [page, status, streamSnapshot, extensionEntries] = await Promise.all([
         this.api.messages(target.session, { limit: MESSAGE_PAGE_SIZE }, target.machineId, signal),
         this.api.status(target.session, target.machineId, signal),
@@ -1686,9 +1725,12 @@ export class SessionController {
       const history = this.transcripts.mergeHistory(key, page);
       const messages = this.transcripts.seedStreamingPartial(history.messages, streamSnapshot.partial);
       this.streamWatermark = { sessionId: target.session.id, seq: streamSnapshot.seq };
-      // The extension snapshot is authoritative for its own list, so it replaces the entries and
-      // then any entry event observed while the read was in flight is replayed on top of it.
-      const extensionEntriesState = this.applyExtensionSnapshot(target.session.id, extensionEntries);
+      // A response from a previous event stream carries a baseline that does not apply to this
+      // one, so it changes nothing.
+      const extensionEntriesState =
+        extensionGeneration === this.extensionStreamGeneration
+          ? this.applyExtensionSnapshot(target.session.id, extensionEntries)
+          : {};
       this.setState({
         ...history,
         messages,
@@ -1701,39 +1743,92 @@ export class SessionController {
   }
 
   /**
-   * Record an extension read as the authoritative entry list and watermark.
+   * Apply an extension read: its entries, then the events observed after its cursor.
    *
-   * A snapshot older than an entry event already applied would roll that entry back, so it is
-   * ignored. Refreshes are coalesced and scheduled, so an event can arrive before the read that
-   * was requested before it; comparing watermarks is what keeps the newer state.
-   *
-   * A read that failed reports no watermark and changes nothing.
+   * A snapshot older than events already applied is still applied, because it can carry entries
+   * the client never saw (a resync after a disconnect). Those events are replayed on top, so
+   * applying it fills gaps without rolling anything back. A read that failed reports no cursor
+   * and changes nothing.
    */
   private applyExtensionSnapshot(
     sessionId: string,
     response: { entries: SessionExtensionEntry[]; seq: number | undefined },
   ): { sessionExtensionEntries?: SessionExtensionEntry[] } {
-    if (response.seq === undefined) return {};
-    const watermark = this.extensionWatermark;
-    if (watermark?.sessionId === sessionId && response.seq < watermark.seq) {
-      return {};
+    const seq = response.seq;
+    if (seq === undefined) return {};
+    const cursor = this.extensionCursor;
+    const sameSession = cursor?.sessionId === sessionId;
+    const observed = this.extensionJournal?.sessionId === sessionId ? this.extensionJournal.events : [];
+    const replay = observed
+      .filter((event) => event.seq !== undefined && event.seq > seq)
+      .sort((left, right) => (left.seq ?? 0) - (right.seq ?? 0));
+
+    let entries = response.entries;
+    if (sameSession && seq < cursor.seq) {
+      // Two reads of the same session can overlap (a reconnect refreshes while the subscription
+      // barrier reads), so an older one can land last. Its entries are still worth applying, but
+      // entries learned from the newer read must survive it, or the newer state is rolled back.
+      // This only merges within one session; a branch change arrives as a newer read, which
+      // replaces the list instead of keeping entries that are no longer on the branch.
+      for (const entry of this.getState().sessionExtensionEntries) {
+        entries = mergeExtensionEntry(entries, entry);
+      }
     }
-    this.extensionWatermark = { sessionId, seq: response.seq };
-    return { sessionExtensionEntries: response.entries };
+    for (const event of replay) entries = mergeExtensionEntry(entries, event.entry);
+
+    this.extensionCursor = sameSession ? { sessionId, seq: Math.max(seq, cursor.seq) } : { sessionId, seq };
+    // Keep exactly the events this snapshot does not cover, so a later one can bring them forward.
+    this.extensionJournal = { sessionId, events: replay };
+    return { sessionExtensionEntries: entries };
+  }
+
+  /**
+   * Apply one extension entry event, and remember it until a snapshot covers it.
+   *
+   * An event the current snapshot already covers is dropped: re-applying it would append an entry
+   * the window has already made a decision about.
+   */
+  private applyExtensionEntryEvent(event: ExtensionEntryEvent): void {
+    const selected = this.getState().selectedSession;
+    if (selected === undefined) return;
+    const cursor = this.extensionCursor;
+    if (event.seq !== undefined && cursor?.sessionId === selected.id && event.seq <= cursor.seq) return;
+
+    this.applySessionExtensionEntry(event.entry);
+    if (event.seq === undefined) return;
+    const events = this.extensionJournal?.sessionId === selected.id ? this.extensionJournal.events : [];
+    events.push(event);
+    // Bounded like the join buffer: these are replayed on every snapshot, and a stream this long
+    // between two reads is pathological. The oldest events are covered by the next read anyway.
+    if (events.length > this.maxJoinBufferedEvents) events.splice(0, events.length - this.maxJoinBufferedEvents);
+    this.extensionJournal = { sessionId: selected.id, events };
+  }
+
+  /**
+   * Forget the extension baseline.
+   *
+   * Called when the selected session changes and when the event stream restarts (a reconnect),
+   * where sequence numbers begin again and the previous baseline cannot be compared.
+   */
+  private resetExtensionBaseline(): void {
+    this.extensionCursor = undefined;
+    this.extensionJournal = undefined;
+    this.extensionStreamGeneration += 1;
   }
 
   /**
    * Re-read the selected session's extension entries.
    *
-   * The event hub does not replay, and the join read can complete before the subscription is
-   * live, so entries written in that window would otherwise never reach the browser.
+   * Used once the subscription is confirmed live, to recover anything written before it.
    */
   private async refreshSelectedExtensionEntries(): Promise<void> {
     const session = this.getState().selectedSession;
     if (session === undefined || session.archived === true || isClientPendingStartSessionInfo(session)) return;
     const machineId = selectedMachineId(this.getState());
+    const generation = this.extensionStreamGeneration;
     try {
       const response = await this.api.extensionEntries(session, machineId, this.selectionLoad.signal);
+      if (generation !== this.extensionStreamGeneration) return;
       if (!this.isSelectedSessionIdentity(session.id, machineId)) return;
       this.setState(this.applyExtensionSnapshot(session.id, response));
     } catch (error) {
@@ -2096,44 +2191,8 @@ export class SessionController {
     this.runStarterPolicySubstitutionCheck(status.sessionId, status);
   }
 
-  /**
-   * Replace or append one extension entry for the selected session.
-   *
-   * Entries are keyed by their session entry id, so an entry already seeded by the join read is
-   * replaced rather than duplicated when its live event arrives.
-   */
-  private applyExtensionEntryEvent(event: Extract<SessionUiEvent, { type: "session.extensionEntry" }>): void {
-    const selected = this.getState().selectedSession;
-    if (selected === undefined) return;
-    const watermark = this.extensionWatermark;
-    // An entry event the current read already covers is dropped: applying it would only append an
-    // entry the snapshot has already accounted for.
-    if (event.seq !== undefined && watermark?.sessionId === selected.id && event.seq <= watermark.seq) {
-      return;
-    }
-    this.applySessionExtensionEntry(event.entry);
-    // Events arrive in order, so applying one advances what this client is consistent with.
-    if (event.seq !== undefined) this.extensionWatermark = { sessionId: selected.id, seq: event.seq };
-  }
-
   private applySessionExtensionEntry(entry: SessionExtensionEntry) {
-    const entries = this.getState().sessionExtensionEntries;
-    // An entry the join read already contained is replaced in place, so a live event cannot
-    // duplicate it. Entry ids are stable within a session; an entry Pi recorded without an id
-    // is appended, because treating every id-less entry as the same entry would drop state.
-    const index =
-      entry.entryId === "" ? -1 : entries.findIndex((candidate) => candidate.entryId === entry.entryId);
-    const merged =
-      index === -1
-        ? [...entries, entry]
-        : entries.map((candidate, position) => (position === index ? entry : candidate));
-    // Hold the same recent window the service enforces, so live updates cannot grow the list
-    // past the documented bound between refreshes.
-    const sessionExtensionEntries =
-      merged.length > SESSION_EXTENSION_ENTRY_LIMIT
-        ? merged.slice(merged.length - SESSION_EXTENSION_ENTRY_LIMIT)
-        : merged;
-    this.setState({ sessionExtensionEntries });
+    this.setState({ sessionExtensionEntries: mergeExtensionEntry(this.getState().sessionExtensionEntries, entry) });
   }
 
   private applySessionName(sessionId: string, name: string | undefined) {
@@ -2167,6 +2226,13 @@ export class SessionController {
     // whether one of them is already included. They are matched against their own cursor.
     if (event.type === "session.extensionEntry") {
       this.applyExtensionEntryEvent(event);
+      return;
+    }
+
+    if (event.type === "session.subscribed") {
+      // The subscription is live now, so anything written before it and after the last read is
+      // only recoverable by reading again.
+      void this.refreshSelectedExtensionEntries();
       return;
     }
 

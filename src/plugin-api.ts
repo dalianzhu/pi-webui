@@ -84,8 +84,9 @@ export interface PluginRuntimeState {
    * Pi extensions persist their own state as `custom` session entries, and Pi deliberately keeps
    * those entries out of the model context. A plugin reads them by `customType` to render state
    * owned by an extension. PI WEBUI does not interpret `data`: its shape belongs to the
-   * extension that wrote it. The list is bounded by the host, and an entry whose payload
-   * exceeded the host limit carries `dataOmitted` instead of `data`.
+   * extension that wrote it. The list is bounded by the host, and an entry whose payload could
+   * not be forwarded — too large, or not representable in JSON — carries `dataOmitted` instead of
+   * `data`.
    */
   sessionExtensionEntries?: readonly SessionExtensionEntry[];
   workspaceTool?: string;
