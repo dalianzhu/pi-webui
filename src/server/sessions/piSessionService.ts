@@ -1186,8 +1186,15 @@ export interface PiSessionServiceDependencies {
 
 export class PiSessionService implements SessionRouteService {
   private readonly active = new Map<string, ActiveSession<PiSessionRuntime>>();
-  /** Read ordering per session runtime, keyed weakly so a replaced runtime is not retained. */
-  private readonly extensionReadRevisions = new WeakMap<PiAgentSession, number>();
+  /**
+   * Read ordering for extension entries, monotonic for this service lifetime.
+   *
+   * It is deliberately not per runtime: a runtime can be stopped and cold opened again while the
+   * browser keeps the same event socket, so a per-runtime counter would restart and a client would
+   * reject the new runtime's reads as superseded. A client only needs this to increase within one
+   * session, which a shared counter provides without keeping per-session state.
+   */
+  private extensionReadRevision = 0;
   private readonly pendingSessionOpens = new Map<string, PendingSessionOpen>();
   private readonly activities = new Map<
     string,
@@ -2702,10 +2709,11 @@ export class PiSessionService implements SessionRouteService {
     // while an entry already in the branch can only be replayed into an idempotent replacement.
     const seq = this.events.currentSeq(session.sessionId);
     // Ordering between reads is a separate fact from the event watermark: the branch can change
-    // without publishing an event, so two reads can share a `seq`. The counter is keyed by the
-    // session runtime, so it does not leak and starts fresh when a runtime is replaced.
-    const readRevision = (this.extensionReadRevisions.get(session) ?? 0) + 1;
-    this.extensionReadRevisions.set(session, readRevision);
+    // without publishing an event, so two reads can share a `seq`. This counter keeps increasing
+    // for the service lifetime, so reopening a stopped session cannot hand a client a read that
+    // looks older than what it already applied.
+    this.extensionReadRevision += 1;
+    const readRevision = this.extensionReadRevision;
     return { entries: sessionExtensionEntriesFromBranch(session.sessionManager.getBranch()), seq, readRevision };
   }
 

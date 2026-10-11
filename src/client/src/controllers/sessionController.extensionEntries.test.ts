@@ -286,9 +286,9 @@ describe("SessionController extension entries", () => {
     expect(harness.state().sessionExtensionEntries.map((entry) => entry.entryId)).toEqual(["e1", "e2", "e3"]);
   });
 
-  // A refresh that is still in flight queues a trailing pass, and each pass can be overtaken by a
-  // newer event, so "the trailing pass will fix it" is not enough: the gap entry has to survive
-  // both passes.
+  // A refresh that is still in flight queues a trailing pass, and the first pass is overtaken by a
+  // newer event. Its snapshot does not contain that entry, so the gap entry survives only because
+  // the events after its cursor are replayed, and it is still present after the trailing pass.
   it("keeps a gap entry across a refresh and its trailing pass", async () => {
     const firstMessages = deferred<typeof emptyPage>();
     const harness = createController({ entries: [extensionEntry("e1", 1)], seq: 5 });

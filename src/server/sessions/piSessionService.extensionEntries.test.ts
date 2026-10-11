@@ -87,6 +87,45 @@ describe("PiSessionService extension entries", () => {
     expect(second.readRevision).toBe(2);
   });
 
+  // A stopped session is cold opened again while the browser keeps the same event socket, so the
+  // reads after a reopen must not look older than the reads before it. A per-runtime counter would
+  // restart and a client would reject them as superseded.
+  it("keeps read ordering monotonic across a stopped and reopened session", async () => {
+    const hub = new CapturingSessionEventHub();
+    const branches: unknown[][] = [
+      [],
+      [customEntry("task-plan", { revision: 1 }, "e1")],
+    ];
+    let createdRuntimes = 0;
+    const service = new PiSessionService(hub, {
+      agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
+      createAgentRuntime: () => {
+        const branch = branches[Math.min(createdRuntimes, branches.length - 1)] ?? [];
+        createdRuntimes += 1;
+        return Promise.resolve(
+          fakeRuntime("ext-session", {
+            sessionManager: fakeSessionManager("/workspace", { getBranch: () => branch }),
+          }).runtime,
+        );
+      },
+      sessionManager: sessionGateway([sessionRecord("ext-session")]),
+      heartbeatIntervalMs: 60_000,
+    });
+
+    const before = await service.extensionEntries(sessionRef("ext-session"));
+    expect(before.entries).toEqual([]);
+
+    await service.stop(sessionRef("ext-session"));
+    const after = await service.extensionEntries(sessionRef("ext-session"));
+    await service.dispose();
+
+    // The reopen really produced a new runtime, so the assertion below is not satisfied by reuse.
+    expect(createdRuntimes).toBe(2);
+    expect(after.entries.map((entry) => entry.entryId)).toEqual(["e1"]);
+    expect(after.readRevision).toBeGreaterThan(before.readRevision);
+  });
+
   it("publishes an extension entry event when Pi reports one", async () => {
     const hub = new CapturingSessionEventHub();
     const listeners: ((event: unknown) => void)[] = [];
