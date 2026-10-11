@@ -240,6 +240,14 @@ export function registerSessionRoutes(app: FastifyInstance, sessions: SessionRou
     }
   });
 
+  app.get<{ Params: { sessionId: string }; Querystring: SessionQuery }>(`${prefix}/sessions/:sessionId/extension-entries`, async (request, reply) => {
+    try {
+      return await sessions.extensionEntries(sessionLookupFromQuery(request.params.sessionId, request.query));
+    } catch (error) {
+      return reply.code(404).send({ error: errorMessage(error) });
+    }
+  });
+
   app.get<{ Params: { sessionId: string }; Querystring: SessionQuery }>(`${prefix}/sessions/:sessionId/stream-snapshot`, async (request, reply) => {
     try {
       return await sessions.streamSnapshot(sessionLookupFromQuery(request.params.sessionId, request.query));

@@ -31,6 +31,7 @@ import type {
   ClientSessionModel,
   ClientSessionStatus,
   ClientSessionSystemPrompt,
+  ClientSessionExtensionEntriesResponse,
   ClientSessionTreeNavigateRequest,
   ClientSessionTreeNavigateResult,
   ClientSessionMessageForkResult,
@@ -40,6 +41,7 @@ import type {
 } from "../types.js";
 import { projectBrowserMessage } from "../browserMessageProjection.js";
 import { pageMessagesAtSafeBoundary } from "./messagePaging.js";
+import { sessionExtensionEntriesFromBranch, sessionExtensionEntry } from "./extensionEntries.js";
 import { exportSessionHistoryHtml } from "./sessionHistoryExport.js";
 import type { SessionEventHub } from "../realtime/sessionEventHub.js";
 import { BUILTIN_COMMANDS } from "./builtinCommands.js";
@@ -2682,6 +2684,18 @@ export class PiSessionService implements SessionRouteService {
   async systemPrompt(ref: PiSessionLookup): Promise<ClientSessionSystemPrompt> {
     const systemPrompt = (await this.getOrOpen(ref)).state.systemPrompt;
     return systemPrompt === undefined ? {} : { systemPrompt };
+  }
+
+  /**
+   * Extension-owned entries for one session, oldest first.
+   *
+   * These are Pi `custom` entries: state written by an extension and deliberately excluded from
+   * the model context. They are read from the session branch rather than from the conversation
+   * projection, because the projection is chat content and these entries are not chat content.
+   */
+  async extensionEntries(ref: PiSessionLookup): Promise<ClientSessionExtensionEntriesResponse> {
+    const session = await this.getOrOpen(ref);
+    return { entries: sessionExtensionEntriesFromBranch(session.sessionManager.getBranch()) };
   }
 
   /**
@@ -7331,6 +7345,12 @@ function toClientEvent(event: unknown): SessionUiEvent {
       details: toolResultDetails(result),
       isError: getBoolean(event, "isError") === true,
     };
+  }
+  if (eventType === "entry_appended") {
+    // Pi emits this when an extension persists its own state. Non-custom entries keep the
+    // existing payload-free `pi.event` passthrough so this adds no new traffic for them.
+    const entry = sessionExtensionEntry(getProperty(event, "entry"));
+    return entry === undefined ? { type: "pi.event", eventType } : { type: "session.extensionEntry", entry };
   }
   if (eventType === "agent_start") return { type: "agent.start" };
   if (eventType === "agent_end") return { type: "agent.end" };

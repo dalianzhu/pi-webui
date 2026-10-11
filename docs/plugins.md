@@ -1092,6 +1092,53 @@ render: ({ terminal }) => html`
 
 Review command strings carefully. They are trusted shell commands executed in the workspace terminal.
 
+## Reading session extension entries
+
+Pi extensions persist their own state as `custom` session entries, and Pi deliberately keeps those entries out of the model context and out of the conversation transcript. A plugin can read them to render state owned by an extension, for example a plan, a tracker, or an observer.
+
+Entry data belongs to the extension that wrote it. PI WEBUI never interprets `data`; a plugin reads entries by their `customType` and parses the payload it expects.
+
+Support is an additive v1 capability. Check `sessionExtensionEntries` before relying on the state:
+
+```js
+export default {
+  apiVersion: 1,
+  name: "My Plugin",
+  activate: ({ html, capabilities }) => ({
+    contributions: capabilities?.sessionExtensionEntries === true
+      ? { workspacePanels: [{ id: "workspace.tracker", title: "Tracker", render: renderTracker }] }
+      : { workspacePanels: [{ id: "workspace.tracker", title: "Tracker", render: () => html`<p class="muted">Requires a newer PI WEBUI host.</p>` }] },
+  }),
+};
+```
+
+The selected session's entries are on `state.sessionExtensionEntries`, oldest first:
+
+```js
+import { html } from "lit";
+
+function renderTracker({ state }) {
+  const entries = (state.sessionExtensionEntries ?? []).filter((entry) => entry.customType === "my-extension");
+  if (entries.length === 0) return html`<p class="muted">No extension state for this session.</p>`;
+  const latest = entries[entries.length - 1];
+  return html`<section class="viewer"><pre>${JSON.stringify(latest.data, null, 2)}</pre></section>`;
+}
+```
+
+Each entry provides:
+
+| Field | Meaning |
+| --- | --- |
+| `customType` | Identifier chosen by the writing extension, for example `task-plan`. Filter on this; other extensions' entries are interleaved. |
+| `data` | Opaque payload written by the extension. Absent when the extension wrote none, or when it was too large to forward. |
+| `dataOmitted` | `true` when the payload exceeded the host limit and was left out. The entry itself is still reported so identity and ordering stay intact. |
+| `entryId` | Session entry id, usable as a stable identity for the entry. |
+| `timestamp` | ISO timestamp recorded by Pi. |
+
+The list is bounded: only the most recent entries per session are forwarded. Treat it as a recent window over the extension's state, not as complete history, and read the extension's own latest entry to derive current state.
+
+Entries update as the extension writes them, so a panel or label re-renders without a page reload. Callback-based contributions such as workspace labels still return synchronously; build labels from this state through the same plugin-owned cache pattern used for other async reads.
+
 ## Private and experimental PI WEBUI APIs
 
 PI WEBUI's `/api/...` HTTP and WebSocket routes and runtime-only fields are private implementation details. They exist because plugins are trusted browser code, and because some capabilities may be evaluated there before they are designed as stable helpers.

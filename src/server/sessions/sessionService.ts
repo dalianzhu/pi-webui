@@ -24,6 +24,7 @@ import type {
   ClientSession,
   ClientSessionCleanupExecuteResponse,
   ClientSessionCleanupPreviewResponse,
+  ClientSessionExtensionEntriesResponse,
   ClientSessionModel,
   ClientSessionRef,
   ClientSessionStatus,
@@ -56,6 +57,7 @@ export interface SessionRouteService {
   rememberCurrentModelPolicy(ref: SessionRouteLookup): Promise<StarterModelPolicyPreference>;
   setModelPolicy(ref: SessionRouteLookup, update: SessionModelPolicyUpdate): Promise<SessionModelPolicyResponse>;
   systemPrompt(ref: SessionRouteLookup): Promise<ClientSessionSystemPrompt>;
+  extensionEntries(ref: SessionRouteLookup): Promise<ClientSessionExtensionEntriesResponse>;
   streamSnapshot(ref: SessionRouteLookup): Promise<SessionStreamSnapshot>;
   notificationCatalog(): SessionNotificationCatalogSnapshot | Promise<SessionNotificationCatalogSnapshot>;
   unreadCatalog(): Promise<SessionUnreadCatalogSnapshot>;

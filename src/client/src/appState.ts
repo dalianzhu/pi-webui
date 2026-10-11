@@ -1,5 +1,5 @@
 import type { AuthProviderOption, CommandOption, CommandResult, FileContentResponse, FileTreeEntry, GitDiffResponse, GitStatusResponse, Machine, MachineHealth, MachineRuntime, OAuthFlowState, PiWebUiStatusResponse, Project, QueuedSessionMessage, SessionActivity, SessionInfo, SessionStatus, SessionTreeSnapshot, TerminalCommandRun, Workspace, WorkspaceActivity } from "./api";
-import type { LearnedSkill, MemoryEntry, SessionModelPolicyResponse } from "../../shared/apiTypes";
+import type { LearnedSkill, MemoryEntry, SessionExtensionEntry, SessionModelPolicyResponse } from "../../shared/apiTypes";
 import type { ChatLine } from "./components/shared";
 import type { QualifiedContributionId } from "./plugins/ids";
 import type { SelectedSessionNotificationInbox } from "./sessionNotifications";
@@ -17,6 +17,14 @@ export interface AppState {
   /** Session records across the selected project's known workspaces, used only for cross-workspace hierarchy display. */
   projectSessions: SessionInfo[];
   messages: ChatLine[];
+  /**
+   * Extension-owned entries for the selected session, oldest first.
+   *
+   * Pi extensions persist their own state as `custom` session entries and Pi keeps those out of
+   * the model context. PI WEBUI forwards them so a plugin can render state owned by an
+   * extension; the entries are otherwise unused by the application.
+   */
+  sessionExtensionEntries: SessionExtensionEntry[];
   messagePageStart: number;
   messagePageEnd: number;
   messagePageTotal: number;
@@ -175,6 +183,7 @@ export function initialAppState(): AppState {
     sessions: [],
     projectSessions: [],
     messages: [],
+    sessionExtensionEntries: [],
     messagePageStart: 0,
     messagePageEnd: 0,
     messagePageTotal: 0,

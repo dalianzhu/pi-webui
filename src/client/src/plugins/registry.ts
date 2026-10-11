@@ -43,7 +43,7 @@ export class PluginRegistry {
       pluginId: id,
       html,
       svg,
-      capabilities: { activityRailItems: true },
+      capabilities: { activityRailItems: true, sessionExtensionEntries: true },
     });
     const contributions = result.contributions;
     for (const action of contributions.actions ?? []) this.actions.push(this.qualifyAction(id, action, registration.machineId, registration.sourcePluginId));

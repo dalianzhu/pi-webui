@@ -11,6 +11,7 @@ export type {
   MessagePage as ClientMessagePage,
   SessionStreamSnapshot,
   SessionSystemPrompt as ClientSessionSystemPrompt,
+  SessionExtensionEntriesResponse as ClientSessionExtensionEntriesResponse,
   SessionStatus as ClientSessionStatus,
   SessionModel as ClientSessionModel,
   ThinkingLevel as ClientThinkingLevel,

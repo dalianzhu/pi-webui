@@ -12,6 +12,7 @@ export type SvgTemplateTag = (strings: TemplateStringsArray, ...values: unknown[
 
 export interface PluginHostCapabilities {
   activityRailItems?: true;
+  sessionExtensionEntries?: true;
 }
 
 export interface PluginContributionIdentity {

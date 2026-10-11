@@ -14,7 +14,7 @@ import { StreamEventBuffer, isBufferedStreamEvent } from "../streamEventBuffer";
 import { isArchivableSessionInfo, isTransientNewSessionInfo, sessionPersistenceOptionsForRuntime } from "../sessionPersistence";
 import { isSessionActive } from "../../../shared/activity";
 import { PI_WEBUI_CAPABILITIES, supportsPiWebUiCapability } from "../../../shared/capabilities";
-import type { ClientSessionModelPolicyStatus, ExactModelSelection, PromptAttachmentDelivery, SessionModelPolicyMode, SessionModelPolicyResponse, SessionModelPolicyUpdate, SessionNotificationInboxEvent, StarterModelPolicyPreference } from "../../../shared/apiTypes";
+import type { ClientSessionModelPolicyStatus, ExactModelSelection, PromptAttachmentDelivery, SessionModelPolicyMode, SessionModelPolicyResponse, SessionModelPolicyUpdate, SessionExtensionEntry, SessionNotificationInboxEvent, StarterModelPolicyPreference } from "../../../shared/apiTypes";
 import { InMemorySessionSelectionMemory, markSessionArchived, markSessionsArchived, selectPreferredSession, selectionAfterArchivingSession, selectionAfterArchivingSessions, shouldDeselectAfterArchivedCollapse, type SessionSelectionMemory } from "./sessionSelection";
 import { selectedMachineId, type GetState, type SetState, type UpdateUrl } from "./types";
 import { TrailingRefreshCoordinator } from "./trailingRefreshCoordinator";
@@ -322,7 +322,7 @@ export class SessionController {
     // session must not cancel the in-flight upload indicator of the session
     // that is still sending; the per-session entry is cleared by send()'s
     // finally block when the request settles.
-    this.setState({ selectedSession: undefined, messages: [], messagePageStart: 0, messagePageEnd: 0, messagePageTotal: 0, isLoadingEarlierMessages: false, status: undefined, activity: undefined, availableThinkingLevels: [], ...this.clearSelectedModelPolicyState(), treeDialog: undefined });
+    this.setState({ selectedSession: undefined, messages: [], sessionExtensionEntries: [], messagePageStart: 0, messagePageEnd: 0, messagePageTotal: 0, isLoadingEarlierMessages: false, status: undefined, activity: undefined, availableThinkingLevels: [], ...this.clearSelectedModelPolicyState(), treeDialog: undefined });
   }
 
   deselectSession(options?: { forgetRememberedSelection?: boolean | undefined; updateUrl?: boolean | undefined }) {
@@ -1628,7 +1628,7 @@ export class SessionController {
       // already belong to a superseded load, which would cancel the live
       // selection's own refresh.
       const signal = this.selectionLoad.signal;
-      const [page, status, streamSnapshot] = await Promise.all([
+      const [page, status, streamSnapshot, extensionEntries] = await Promise.all([
         this.api.messages(target.session, { limit: MESSAGE_PAGE_SIZE }, target.machineId, signal),
         this.api.status(target.session, target.machineId, signal),
         // The stream snapshot is a progressive enhancement. An older/not-yet-
@@ -1642,6 +1642,14 @@ export class SessionController {
           // rethrow so the whole superseded join unwinds as supersession.
           if (isLoadCancellation(error)) throw error;
           return { seq: 0, partial: null };
+        }),
+        // Extension entries are a progressive enhancement, like the stream snapshot
+        // above: an older or not-yet-restarted session daemon has no
+        // `extension-entries` route, so a failed read means "no extension state"
+        // rather than a failed session load.
+        this.api.extensionEntries(target.session, target.machineId, signal).catch((error: unknown) => {
+          if (isLoadCancellation(error)) throw error;
+          return { entries: [] };
         }),
         this.notifications?.refreshSelectedSession(target.session, target.machineId) ?? Promise.resolve(),
       ]);
@@ -1659,6 +1667,7 @@ export class SessionController {
         ...history,
         messages,
         status,
+        sessionExtensionEntries: extensionEntries.entries,
         activity: this.getState().sessionActivities[target.session.id],
       });
       this.applyStatus(status);
@@ -2018,6 +2027,22 @@ export class SessionController {
     this.runStarterPolicySubstitutionCheck(status.sessionId, status);
   }
 
+  /**
+   * Replace or append one extension entry for the selected session.
+   *
+   * Entries are keyed by their session entry id, so an entry already seeded by the join read is
+   * replaced rather than duplicated when its live event arrives.
+   */
+  private applySessionExtensionEntry(entry: SessionExtensionEntry) {
+    const entries = this.getState().sessionExtensionEntries;
+    const index = entries.findIndex((candidate) => candidate.entryId === entry.entryId);
+    const sessionExtensionEntries =
+      index === -1
+        ? [...entries, entry]
+        : entries.map((candidate, position) => (position === index ? entry : candidate));
+    this.setState({ sessionExtensionEntries });
+  }
+
   private applySessionName(sessionId: string, name: string | undefined) {
     const rename = (session: SessionInfo) => {
       if (session.id !== sessionId) return session;
@@ -2066,6 +2091,11 @@ export class SessionController {
     }
     if (isBufferedStreamEvent(event)) {
       this.queueTranscriptEvent(event);
+      return;
+    }
+
+    if (event.type === "session.extensionEntry") {
+      this.applySessionExtensionEntry(event.entry);
       return;
     }
 

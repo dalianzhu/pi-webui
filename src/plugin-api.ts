@@ -1,5 +1,5 @@
 import type { TemplateResult } from "lit";
-import type { FileContentResponse, MachineKind, PiWebUiStatusResponse, TerminalCommandRunHandle, WriteWorkspaceFileOptions, WriteWorkspaceFileResponse, DeleteWorkspaceFileResponse, MoveWorkspaceFileOptions, MoveWorkspaceFileResponse } from "./shared/apiTypes.js";
+import type { FileContentResponse, MachineKind, PiWebUiStatusResponse, SessionExtensionEntry, TerminalCommandRunHandle, WriteWorkspaceFileOptions, WriteWorkspaceFileResponse, DeleteWorkspaceFileResponse, MoveWorkspaceFileOptions, MoveWorkspaceFileResponse } from "./shared/apiTypes.js";
 
 export type {
   FileContentMediaType,
@@ -17,6 +17,7 @@ export type {
   PiWebUiStatusResponse,
   PiWebUiStatusSeverity,
   PiWebUiVersionResponse,
+  SessionExtensionEntry,
   TerminalCommandRun,
   TerminalCommandRunFilter,
   TerminalCommandRunHandle,
@@ -36,6 +37,8 @@ export type SvgTemplateTag = (strings: TemplateStringsArray, ...values: unknown[
 
 export interface PluginHostCapabilities {
   activityRailItems?: true;
+  /** Host forwards the selected session's extension entries to `PluginRuntimeState`. */
+  sessionExtensionEntries?: true;
 }
 
 export interface PiWebUiPlugin {
@@ -74,6 +77,17 @@ export interface PluginMachine {
 export interface PluginRuntimeState {
   selectedWorkspace?: Workspace;
   selectedSession?: unknown;
+  /**
+   * Extension-owned entries for the selected session, oldest first, when the host advertises
+   * `capabilities.sessionExtensionEntries`.
+   *
+   * Pi extensions persist their own state as `custom` session entries, and Pi deliberately keeps
+   * those entries out of the model context. A plugin reads them by `customType` to render state
+   * owned by an extension. PI WEBUI does not interpret `data`: its shape belongs to the
+   * extension that wrote it. The list is bounded by the host, and an entry whose payload
+   * exceeded the host limit carries `dataOmitted` instead of `data`.
+   */
+  sessionExtensionEntries?: readonly SessionExtensionEntry[];
   workspaceTool?: string;
   mainView?: string;
   piWebUiStatus?: PiWebUiStatusResponse;
