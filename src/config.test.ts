@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_MAX_UPLOAD_BYTES, DEFAULT_UPLOADS_FOLDER, agentDirEnvSource, agentSessionDirEnvKeys, effectiveAgentConfig, effectivePiWebUiConfig, examplePiWebUiConfig, hasAgentDirEnvOverride, hasAgentSessionDirEnvOverride, loadPiWebUiConfig, maxUploadBytes, parseSpeechInputConfig, parseUtilityModelsConfig, replacePiWebUiModelTiers, replacePiWebUiUtilityModels, savePiWebUiConfig, spawnSessionsEnabled, subsessionsEnabled, type PiWebUiConfigFileOperations, type SavePiWebUiConfigOptions } from "./config.js";
+import { UTILITY_MODEL_SESSION_ONLY } from "./shared/apiTypes.js";
 import type { UtilityModelSettings, UtilityModelSettingsResponse, UtilityModelSettingsUpdate } from "./shared/apiTypes.js";
 import type { ModelTierLadder } from "./server/sessions/modelTierRegistry.js";
 
@@ -1039,5 +1040,50 @@ describe("PI WEBUI sessiond effective config", () => {
     const options = { env: { PI_WEBUI_CONFIG: configPath, PI_WEBUI_SESSIOND_HOST: "1.2.3.4", PI_WEBUI_SESSIOND_PORT: "9999" } };
 
     expect(effectivePiWebUiConfig(options).config.sessiond).toEqual({ host: "0.0.0.0", port: 8810 });
+  });
+});
+
+describe("PI WEBUI utility model Context sentinel", () => {
+  it("accepts the sentinel, persists it, and reloads it without an error", async () => {
+    const saved = replacePiWebUiUtilityModels({ context: UTILITY_MODEL_SESSION_ONLY }, testOptions());
+
+    expect(saved.config.utilityModels).toEqual({ context: "session" });
+    expect(JSON.parse(await readFile(configPath, "utf8"))).toEqual({ utilityModels: { context: "session" } });
+
+    const reloaded = loadPiWebUiConfig(testOptions());
+    expect(reloaded.config.utilityModels).toEqual({ context: "session" });
+    expect(reloaded.utilityModelsError).toBeUndefined();
+  });
+
+  it("preserves the sentinel beside a lightweight binding", () => {
+    const utilityModels = {
+      lightweight: { provider: "acme", id: "small", thinkingLevel: "low" },
+      context: UTILITY_MODEL_SESSION_ONLY,
+    } satisfies UtilityModelSettings;
+
+    replacePiWebUiUtilityModels(utilityModels, testOptions());
+
+    expect(loadPiWebUiConfig(testOptions()).config.utilityModels).toEqual(utilityModels);
+  });
+
+  it("rejects the sentinel for lightweight", () => {
+    expect(() => parseUtilityModelsConfig({ lightweight: UTILITY_MODEL_SESSION_ONLY }, configPath))
+      .toThrow(/utilityModels\.lightweight must be an object/u);
+  });
+
+  it("rejects every other Context string", () => {
+    for (const context of ["lightweight", "Session", ""]) {
+      expect(() => parseUtilityModelsConfig({ context }, configPath))
+        .toThrow(/utilityModels\.context must be an object/u);
+    }
+  });
+
+  it("reports a malformed Context subtree without failing the load", async () => {
+    await writeFile(configPath, `${JSON.stringify({ utilityModels: { context: "active" } }, null, 2)}\n`, "utf8");
+
+    const loaded = loadPiWebUiConfig(testOptions());
+
+    expect(loaded.config.utilityModels).toBeUndefined();
+    expect(loaded.utilityModelsError).toContain("utilityModels.context");
   });
 });
