@@ -2,7 +2,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MockInstance } from "vitest";
 import { PiWebUiConfigMutationBusyError } from "../../configMutationCoordinator";
-import type { UtilityModelSettingsResponse, UtilityModelSettingsResponseV2, UtilityModelSettingsUpdate } from "../../shared/apiTypes";
+import { UTILITY_MODEL_SESSION_ONLY, type UtilityModelSettingsResponse, type UtilityModelSettingsResponseV3, type UtilityModelSettingsUpdate } from "../../shared/apiTypes";
 import { FEDERATED_HTTP_ROUTES } from "../../shared/federatedRoutes";
 import type { UtilityModelSettingsRouteService } from "./utilityModelSettingsRoutes";
 import { registerUtilityModelSettingsRoutes } from "./utilityModelSettingsRoutes";
@@ -56,6 +56,63 @@ describe("utility model settings routes", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual(confirmed);
     expect(updateMock).toHaveBeenCalledExactlyOnceWith(update);
+  });
+
+  it("accepts the Context sentinel", async () => {
+    const confirmed = snapshot({ settings: { context: UTILITY_MODEL_SESSION_ONLY } });
+    updateMock.mockResolvedValueOnce(confirmed);
+
+    const response = await app.inject({
+      method: "PUT",
+      url: "/utility-models",
+      payload: { settings: { context: UTILITY_MODEL_SESSION_ONLY } },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual(confirmed);
+    expect(updateMock).toHaveBeenCalledExactlyOnceWith({ context: UTILITY_MODEL_SESSION_ONLY });
+  });
+
+  it("accepts a sentinel plus a lightweight clear", async () => {
+    const update = {
+      lightweight: null,
+      context: UTILITY_MODEL_SESSION_ONLY,
+    } satisfies UtilityModelSettingsUpdate;
+
+    const response = await app.inject({
+      method: "PUT",
+      url: "/utility-models",
+      payload: { settings: update },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(updateMock).toHaveBeenCalledExactlyOnceWith(update);
+  });
+
+  it("rejects the sentinel for lightweight without invoking the service", async () => {
+    const response = await app.inject({
+      method: "PUT",
+      url: "/utility-models",
+      payload: { settings: { lightweight: UTILITY_MODEL_SESSION_ONLY } },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json<{ error: string }>().error).toMatch(/utilityModels\.lightweight must be an object/u);
+    expect(updateMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects every other Context string without invoking the service", async () => {
+    for (const context of ["active", "Session"]) {
+      const response = await app.inject({
+        method: "PUT",
+        url: "/utility-models",
+        payload: { settings: { context } },
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json<{ error: string }>().error).toMatch(/utilityModels\.context must be an object/u);
+    }
+    expect(updateMock).not.toHaveBeenCalled();
   });
 
   for (const invalidCase of invalidRequestCases()) {
@@ -180,9 +237,9 @@ function settingsAfter(patch: UtilityModelSettingsUpdate) {
   };
 }
 
-function snapshot(overrides: Partial<UtilityModelSettingsResponseV2> = {}): UtilityModelSettingsResponseV2 {
+function snapshot(overrides: Partial<UtilityModelSettingsResponseV3> = {}): UtilityModelSettingsResponseV3 {
   return {
-    contractVersion: 2,
+    contractVersion: 3,
     settings: {},
     models: [
       {
