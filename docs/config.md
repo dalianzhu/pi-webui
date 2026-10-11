@@ -305,6 +305,9 @@ Custom providers can carry optional **TPM** (tokens per minute) and **RPM** (req
 - Explicit options are derived from the selected model's supported levels and may include `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`.
 - Changing a model resets that row to `auto`. A saved explicit level that the model no longer supports remains visible, blocks save, and causes only that utility slot to be skipped until repaired.
 - Title generation and branch summaries try `lightweight`, then the active session model. Compaction tries `context`, then `lightweight`, then the active session model; the Context-to-Lightweight fallback uses each row's own configured level.
+- `context` also accepts the literal string `"session"`, shown in **Settings → Utility models** as **Only use session model**. In this state compaction uses the active session model and thinking level directly: it attempts neither the configured `context` model nor `lightweight`, and it never resolves a utility candidate.
+- The **Only use session model** choice is offered only when the selected machine's runtime reports utility-model settings contract version 3. On an older remote the Context row keeps its existing editor and routing; an old client against a contract-3 runtime shows a utility-models error until it is upgraded.
+- Installing this feature requires one manual `pi-webui-sessiond.service` restart (`systemctl --user restart pi-webui-sessiond.service`): the resolver short-circuit and the compaction handler are compiled into the long-lived, non-autoreloading session daemon, and ordinary UI/API autoreload does not load them. A saved `"session"` value keeps applying immediately on each subsequent utility operation after that one-time restart.
 - When both settings are unset, existing active-session behavior is preserved. An unset, malformed, unavailable, unauthenticated, authentication-failing, or call-failing candidate advances to the next fallback in its order. The active-session fallback keeps its existing behavior.
 - Utility calls never change the selected session model, its thinking level, or Pi's remembered default.
 - Version 1 remotes remain model-configurable but require an upgraded runtime for explicit thinking levels.
@@ -313,6 +316,15 @@ Custom providers can carry optional **TPM** (tokens per minute) and **RPM** (req
 - Keep `lightweight` configured and available: if it cannot resolve, `+` fails with the original resolution error plus the lightweight reason instead of starting.
 - Older clients show the substitution only as the session's model; current clients also warn before the start when they can evaluate the policy and show a notice naming the used model.
 - Installing the lightweight fallback requires one manual `pi-webui-sessiond.service` restart (`systemctl --user restart pi-webui-sessiond.service`): the capability is compiled into the long-lived, non-autoreloading session daemon, and ordinary UI/API autoreload does not load it. Until the daemon restarts, `sessions.modelPolicyLightweightFallback` is not advertised and `+` keeps blocking.
+
+```json
+{
+  "utilityModels": {
+    "lightweight": { "provider": "acme", "id": "small", "thinkingLevel": "low" },
+    "context": "session"
+  }
+}
+```
 
 ### Model tiers
 
