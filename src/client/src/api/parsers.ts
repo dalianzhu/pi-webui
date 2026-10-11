@@ -8,7 +8,8 @@ import type { MemoryEntry, MemorySnapshotResponse } from "../../../shared/apiTyp
 import type { LearnedSkill, LearnedSkillsSnapshotResponse } from "../../../shared/apiTypes";
 import type { SkillInfo, SkillInstallInfo, SkillInstallScope, SkillMutationResponse, SkillSearchResponse, SkillsCheckResponse, SkillsResponse, SkillUpdateResponse, SkillUpdateResult, SkillUpdateState } from "../../../shared/apiTypes";
 import { MODEL_TIERS, RECENT_PROJECT_LIMIT, UTILITY_MODEL_SLOTS } from "../../../shared/apiTypes";
-import type { ModelTier, ModelTierEntry, ModelTierLadder, ModelTierModelOption, ModelTierRowValidation, ModelTierSettingsResponse, TierModelRef, UtilityModelBinding, UtilityModelOptionV1, UtilityModelOptionV2, UtilityModelSettings, UtilityModelSettingsResponse, UtilityModelSettingsResponseV1, UtilityModelSettingsResponseV2, UtilityModelSlot, UtilityModelSlotValidation } from "../../../shared/apiTypes";
+import { UTILITY_MODEL_SESSION_ONLY } from "../../../shared/apiTypes";
+import type { ModelTier, ModelTierEntry, ModelTierLadder, ModelTierModelOption, ModelTierRowValidation, ModelTierSettingsResponse, TierModelRef, UtilityModelBinding, UtilityModelOptionV1, UtilityModelOptionV2, UtilityModelSettings, UtilityModelSettingsResponse, UtilityModelSettingsResponseV1, UtilityModelSettingsResponseV2, UtilityModelSettingsResponseV3, UtilityModelSlot, UtilityModelSlotValidation } from "../../../shared/apiTypes";
 import { parseActiveAgentProfileDescriptor } from "../../../shared/activeAgentProfile";
 import { parseKnownPiWebUiCapabilities } from "../../../shared/capabilities";
 import { canonicalBcp47LanguageTag, isCanonicalLowercaseUuid } from "../../../shared/speechInput";
@@ -1596,6 +1597,7 @@ export function parseUtilityModelSettingsResponse(value: unknown): UtilityModelS
   if (unknownKey !== undefined) throw new Error(`Invalid utility model settings response field: ${unknownKey}`);
   if (record["contractVersion"] === 1) return parseUtilityModelSettingsResponseV1(record);
   if (record["contractVersion"] === 2) return parseUtilityModelSettingsResponseV2(record);
+  if (record["contractVersion"] === 3) return parseUtilityModelSettingsResponseV3(record);
   throw new Error("Invalid utility model settings contract version");
 }
 
@@ -1616,6 +1618,18 @@ function parseUtilityModelSettingsResponseV2(record: Record<string, unknown>): U
   return {
     contractVersion: 2,
     settings: parseUtilityModelSettingsV2(record["settings"]),
+    models: arrayOf(parseUtilityModelOptionV2)(record["models"]),
+    slots: parseUtilityModelSlots(record["slots"]),
+    valid: requireBoolean(record, "valid"),
+    ...optionalField("configError", configError),
+  };
+}
+
+function parseUtilityModelSettingsResponseV3(record: Record<string, unknown>): UtilityModelSettingsResponseV3 {
+  const configError = optionalString(record, "configError");
+  return {
+    contractVersion: 3,
+    settings: parseUtilityModelSettingsV3(record["settings"]),
     models: arrayOf(parseUtilityModelOptionV2)(record["models"]),
     slots: parseUtilityModelSlots(record["slots"]),
     valid: requireBoolean(record, "valid"),
@@ -1644,6 +1658,20 @@ function parseUtilityModelSettingsV2(value: unknown): UtilityModelSettings {
   return {
     ...optionalField("lightweight", record["lightweight"] === undefined ? undefined : parseUtilityModelBinding(record["lightweight"], "settings.lightweight")),
     ...optionalField("context", record["context"] === undefined ? undefined : parseUtilityModelBinding(record["context"], "settings.context")),
+  };
+}
+
+function parseUtilityModelSettingsV3(value: unknown): UtilityModelSettings {
+  const record = requireObjectRecord(value, "settings");
+  const unknownSlot = Object.keys(record).find((key) => !isUtilityModelSlot(key));
+  if (unknownSlot !== undefined) throw new Error(`Invalid utility model settings field: settings.${unknownSlot}`);
+  return {
+    ...optionalField("lightweight", record["lightweight"] === undefined ? undefined : parseUtilityModelBinding(record["lightweight"], "settings.lightweight")),
+    ...optionalField("context", record["context"] === undefined
+      ? undefined
+      : record["context"] === UTILITY_MODEL_SESSION_ONLY
+        ? UTILITY_MODEL_SESSION_ONLY
+        : parseUtilityModelBinding(record["context"], "settings.context")),
   };
 }
 

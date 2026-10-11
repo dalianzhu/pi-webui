@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { PI_WEBUI_CAPABILITIES } from "../../../shared/capabilities";
 import { SESSION_NOTIFICATION_LIMIT, SESSION_NOTIFICATION_MESSAGE_BYTES, SESSION_UNREAD_CATALOG_ID_MAX_LENGTH } from "../../../shared/apiTypes";
+import { UTILITY_MODEL_SESSION_ONLY } from "../../../shared/apiTypes";
 import { SPEECH_INPUT_MAX_TRANSCRIPT_BYTES } from "../../../shared/speechInputAudio";
 import { parseAuthProvidersResponse, parseCommandResult, parseFileContentResponse, parseFileSuggestion, parseGitStatusResponse, parseHostSpeechStatus, parseHostSpeechStopResponse, parseHostSpeechTerminalResult, parseLearnedSkillsSnapshotResponse, parseMachineRuntime, parseMemorySnapshotResponse, parseMessagePage, parseModelTierSettingsResponse, parseSpeechInputSettingsResponse, parseSpeechInputTranscribeResponse, parseUtilityModelSettingsResponse, parseOAuthFlowState, parsePiPackageMutationResponse, parsePiPackagesResponse, parsePiWebUiConfigResponse, parsePiWebUiPluginsResponse, parsePiWebUiRuntimeResponse, parsePiWebUiStatusResponse, parseSessionBulkArchiveResponse, parseSessionBulkDeleteArchivedResponse, parseSessionCleanupExecuteResponse, parseSessionCleanupPreviewResponse, parseSessionDefaultsResponse, parseSessionDefaultsV2Response, parseSessionInfo, parseSessionMessageForkResult, parseSessionModelPolicyResponse, parseSessionReorderResponse, parseSessionNotificationInboxEvent, parseSessionNotificationInboxSnapshot, parseSessionStatus, parseSessionStreamSnapshot, parseSessionSystemPrompt, parseSessionTreeNavigateResult, parseSessionTreeSnapshot, parseSessionUnreadCatalogSnapshot, parseSessionUnreadEvent, parseSlashCommand, parseSystemInfoResponse, parseSystemMetricsResponse, parseTerminalCommandRun, parseTerminalInfo, parseWorkspace, parseWorkspaceActivityResponse } from "./parsers";
 
@@ -1484,8 +1485,60 @@ describe("API parsers", () => {
     }))).toThrow("models");
   });
 
+  it("parses version 3 utility-model settings snapshots with the session-only Context sentinel", () => {
+    const wire = utilityModelSettingsV3Wire();
+
+    expect(parseUtilityModelSettingsResponse(wire)).toEqual(wire);
+    expect(parseUtilityModelSettingsResponse(wire).settings).toEqual({
+      lightweight: { provider: "openai", id: "gpt-5.6-luna", thinkingLevel: "max" },
+      context: UTILITY_MODEL_SESSION_ONLY,
+    });
+  });
+
   it("rejects unsupported utility model contract versions", () => {
-    expect(() => parseUtilityModelSettingsResponse(utilityModelSettingsWire({ contractVersion: 3 }))).toThrow("contract version");
+    expect(() => parseUtilityModelSettingsResponse(utilityModelSettingsWire({ contractVersion: 4 }))).toThrow("contract version");
+    expect(() => parseUtilityModelSettingsResponse(utilityModelSettingsWire({ contractVersion: "3" }))).toThrow("contract version");
+  });
+
+  it("parses version 3 sentinel and binding Context values", () => {
+    const sentinel = utilityModelSettingsV3Wire({
+      settings: {
+        lightweight: { provider: "openai", id: "gpt", thinkingLevel: "max" },
+        context: UTILITY_MODEL_SESSION_ONLY,
+      },
+    });
+    const binding = utilityModelSettingsV3Wire({
+      settings: { context: { provider: "openai", id: "gpt", thinkingLevel: "high" } },
+    });
+
+    expect(parseUtilityModelSettingsResponse(sentinel).settings).toEqual({
+      lightweight: { provider: "openai", id: "gpt", thinkingLevel: "max" },
+      context: UTILITY_MODEL_SESSION_ONLY,
+    });
+    expect(parseUtilityModelSettingsResponse(binding).settings).toEqual({
+      context: { provider: "openai", id: "gpt", thinkingLevel: "high" },
+    });
+  });
+
+  it("rejects malformed version 3 sentinel values and unknown keys", () => {
+    for (const context of ["Session", "", 3]) {
+      expect(() => parseUtilityModelSettingsResponse(utilityModelSettingsV3Wire({ settings: { context } }))).toThrow("settings.context");
+    }
+    expect(() => parseUtilityModelSettingsResponse(utilityModelSettingsV3Wire({
+      settings: { lightweight: "session" },
+    }))).toThrow("settings.lightweight");
+    expect(() => parseUtilityModelSettingsResponse(utilityModelSettingsV3Wire({
+      settings: { advanced: { provider: "openai", id: "gpt" } },
+    }))).toThrow("settings.advanced");
+    expect(() => parseUtilityModelSettingsResponse(utilityModelSettingsV3Wire({
+      settings: { context: { provider: "openai", id: "gpt", extra: true } },
+    }))).toThrow("settings.context.extra");
+    expect(() => parseUtilityModelSettingsResponse(utilityModelSettingsV3Wire({ unexpected: true }))).toThrow("field");
+  });
+
+  it("keeps version 1 and version 2 parsers rejecting the sentinel", () => {
+    expect(() => parseUtilityModelSettingsResponse(utilityModelSettingsWire({ settings: { context: "session" } }))).toThrow("settings.context");
+    expect(() => parseUtilityModelSettingsResponse(utilityModelSettingsV2Wire({ settings: { context: "session" } }))).toThrow("settings.context");
   });
 
   it("parses model-tier settings snapshots with stale ladders and separate provider/model IDs", () => {
@@ -1636,6 +1689,33 @@ function utilityModelSettingsV2Wire(overrides: Record<string, unknown> = {}) {
     settings: {
       lightweight: { provider: "openai", id: "gpt-5.6-luna", thinkingLevel: "max" },
       context: { provider: "openai", id: "org/gpt-5.6-luna/medium" },
+    },
+    models: [
+      {
+        model: { provider: "openai", id: "gpt-5.6-luna" },
+        name: "Luna",
+        thinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+      },
+      {
+        model: { provider: "openai", id: "org/gpt-5.6-luna/medium" },
+        thinkingLevels: ["off", "max"],
+      },
+    ],
+    slots: {
+      lightweight: { valid: true },
+      context: { valid: true },
+    },
+    valid: true,
+    ...overrides,
+  };
+}
+
+function utilityModelSettingsV3Wire(overrides: Record<string, unknown> = {}) {
+  return {
+    contractVersion: 3,
+    settings: {
+      lightweight: { provider: "openai", id: "gpt-5.6-luna", thinkingLevel: "max" },
+      context: "session",
     },
     models: [
       {

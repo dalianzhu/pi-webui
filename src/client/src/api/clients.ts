@@ -7,8 +7,8 @@ import type { SpeechInputSettingsResponse, SpeechInputSettingsUpdate, SpeechInpu
 import type { SpeechInputAudioMimeType } from "../../../shared/speechInputAudio";
 import { SPEECH_INPUT_MAX_TRANSCRIPT_BYTES } from "../../../shared/speechInputAudio";
 import type { ModelTierLadder } from "../../../shared/apiTypes";
-import { UTILITY_MODEL_SLOTS } from "../../../shared/apiTypes";
-import type { UtilityModelSettingsResponse, UtilityModelSettingsUpdate } from "../../../shared/apiTypes";
+import { UTILITY_MODEL_SESSION_ONLY } from "../../../shared/apiTypes";
+import type { UtilityModelBinding, UtilityModelSettingsResponse, UtilityModelSettingsUpdate } from "../../../shared/apiTypes";
 import type { MemorySnapshotResponse } from "../../../shared/apiTypes";
 import type { LearnedSkillsSnapshotResponse } from "../../../shared/apiTypes";
 import type { SkillCheckRequest, SkillInstallRequest, SkillMutationResponse, SkillSearchRequest, SkillSearchResponse, SkillsCheckResponse, SkillsResponse, SkillToggleRequest, SkillUpdateRequest, SkillUpdateResponse } from "../../../shared/apiTypes";
@@ -302,19 +302,29 @@ function utilityModelSettingsForContract(
   settings: UtilityModelSettingsUpdate,
   contractVersion: UtilityModelSettingsResponse["contractVersion"],
 ): UtilityModelSettingsUpdate {
-  if (contractVersion === 2) return settings;
+  if (contractVersion !== 1) return settings;
 
   const projected: UtilityModelSettingsUpdate = {};
-  for (const slot of UTILITY_MODEL_SLOTS) {
-    if (!Object.prototype.hasOwnProperty.call(settings, slot)) continue;
-    const binding = settings[slot];
-    if (binding === null) {
-      projected[slot] = null;
-    } else if (binding !== undefined) {
-      projected[slot] = { provider: binding.provider, id: binding.id };
+  if (Object.prototype.hasOwnProperty.call(settings, "lightweight")) {
+    const lightweight = settings.lightweight;
+    if (lightweight !== undefined) {
+      projected.lightweight = lightweight === null ? null : projectBinding(lightweight);
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(settings, "context")) {
+    const context = settings.context;
+    if (context === UTILITY_MODEL_SESSION_ONLY) {
+      throw new Error("Cannot save the session-only Context model to a contract version 1 runtime");
+    }
+    if (context !== undefined) {
+      projected.context = context === null ? null : projectBinding(context);
     }
   }
   return projected;
+}
+
+function projectBinding(binding: UtilityModelBinding): UtilityModelBinding {
+  return { provider: binding.provider, id: binding.id };
 }
 
 export const utilityModelsApi = {
