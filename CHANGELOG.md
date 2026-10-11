@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.24.0
+
+### Minor Changes
+
+- bef6117: Add an explicit "Only use session model" Context utility routing mode. When `utilityModels.context`
+  is `"session"`, compaction uses the active session model and thinking level directly and attempts
+  neither the configured Context model nor Lightweight; unset and fixed Context routing are unchanged.
+  The choice appears in **Settings → Utility models** when the selected machine reports utility-model
+  settings contract version 3, and older clients or runtimes keep their current editor. Installing this
+  feature requires one manual `pi-webui-sessiond.service` restart
+  (`systemctl --user restart pi-webui-sessiond.service`) because the resolver short-circuit and the
+  compaction handler live in the long-lived, non-autoreloading session daemon.
+- 0a9dfd1: Let browser plugins read the selected session's extension entries.
+
+  Pi extensions persist their own state as `custom` session entries, and Pi keeps those entries out of the model context. PI WEBUI dropped them from the conversation projection and provided no plugin access to them, so a plugin had no way to render state owned by an extension.
+
+  - add `GET /api/sessions/:sessionId/extension-entries` on the session daemon and web/API layers
+  - forward each newly appended extension entry to the browser as a `session.extensionEntry` realtime event
+  - expose the selected session's entries as `state.sessionExtensionEntries` for plugin contributions, with a `sessionExtensionEntries` host capability for feature detection
+  - bound the forwarded list, and set `dataOmitted` on an entry whose payload exceeded the limit
+
+  Additive: existing plugins are unaffected and `data` remains opaque to PI WEBUI.
+
 ## 1.23.0
 
 ### Minor Changes
