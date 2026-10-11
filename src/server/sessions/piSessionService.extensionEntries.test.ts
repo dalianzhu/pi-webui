@@ -51,8 +51,10 @@ describe("PiSessionService extension entries", () => {
       customEntry("task-plan", { revision: 1 }, "e1"),
     ];
     hub.setSeq("ext-session", 12);
+    const service = serviceWith(hub, "ext-session", branch);
 
-    const response = await serviceWith(hub, "ext-session", branch).extensionEntries(sessionRef("ext-session"));
+    const response = await service.extensionEntries(sessionRef("ext-session"));
+    await service.dispose();
 
     // The cursor comes from the same read as the entries; `stream-snapshot` is the precedent.
     expect(response).toEqual({
@@ -82,6 +84,7 @@ describe("PiSessionService extension entries", () => {
     });
 
     // Opening the session publishes its own events, so assert the entry event is among them.
+    await service.dispose();
     expect(hub.sessionEvents).toContainEqual({
       sessionId: "ext-session",
       event: {
@@ -103,6 +106,7 @@ describe("PiSessionService extension entries", () => {
     await service.status(sessionRef("ext-session"));
 
     listeners[0]?.({ type: "entry_appended", entry: { type: "label", id: "l1" } });
+    await service.dispose();
 
     expect(hub.sessionEvents).toContainEqual({
       sessionId: "ext-session",

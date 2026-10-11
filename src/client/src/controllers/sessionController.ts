@@ -371,7 +371,6 @@ export class SessionController {
     // session must not cancel the in-flight upload indicator of the session
     // that is still sending; the per-session entry is cleared by send()'s
     // finally block when the request settles.
-    this.resetExtensionBaseline();
     this.setState({ selectedSession: undefined, messages: [], sessionExtensionEntries: [], messagePageStart: 0, messagePageEnd: 0, messagePageTotal: 0, isLoadingEarlierMessages: false, status: undefined, activity: undefined, availableThinkingLevels: [], ...this.clearSelectedModelPolicyState(), treeDialog: undefined });
   }
 
@@ -545,13 +544,18 @@ export class SessionController {
         return;
       }
       const refreshTarget: SelectedSessionRefreshTarget = { session, machineId, selectionSeq: seq };
-      const joinBuffer = new JoinEventCollector(this.maxJoinBufferedEvents);
+      let joinBuffer = new JoinEventCollector(this.maxJoinBufferedEvents);
       buffered = joinBuffer;
       this.socket.connect(
         session,
         (event) => { joinBuffer.push(event); },
         () => {
-          // A reconnect may land on a restarted daemon whose sequence numbers begin again.
+          // A reconnect may land on a restarted daemon whose sequence numbers begin again, and
+          // anything still buffered from the previous stream belongs to that stream. Replacing the
+          // collector drops those events instead of replaying them onto the new stream, which
+          // would let an old entry evict one the new daemon's window does contain.
+          joinBuffer = new JoinEventCollector(this.maxJoinBufferedEvents);
+          buffered = joinBuffer;
           this.resetExtensionBaseline();
           void this.refreshSelectedSession(session.id);
         },
@@ -1745,10 +1749,16 @@ export class SessionController {
   /**
    * Apply an extension read: its entries, then the events observed after its cursor.
    *
-   * A snapshot older than events already applied is still applied, because it can carry entries
-   * the client never saw (a resync after a disconnect). Those events are replayed on top, so
-   * applying it fills gaps without rolling anything back. A read that failed reports no cursor
-   * and changes nothing.
+   * A read is applied even when events have moved past its cursor, because it can carry entries
+   * the client never saw (a resync after a disconnect); those events are replayed on top, so it
+   * fills gaps without rolling anything back.
+   *
+   * A read that another applied read has already superseded is ignored instead. The cursor only
+   * advances on reads, so this compares read against read, never read against event: the newer
+   * read was the complete recent window at its moment, and the session branch is shared, so the
+   * older one has no standing to add back entries the newer one excluded.
+   *
+   * A read that failed reports no cursor and changes nothing.
    */
   private applyExtensionSnapshot(
     sessionId: string,
@@ -1763,20 +1773,11 @@ export class SessionController {
       .filter((event) => event.seq !== undefined && event.seq > seq)
       .sort((left, right) => (left.seq ?? 0) - (right.seq ?? 0));
 
-    let entries = response.entries;
-    if (sameSession && seq < cursor.seq) {
-      // Two reads of the same session can overlap (a reconnect refreshes while the subscription
-      // barrier reads), so an older one can land last. Its entries are still worth applying, but
-      // entries learned from the newer read must survive it, or the newer state is rolled back.
-      // This only merges within one session; a branch change arrives as a newer read, which
-      // replaces the list instead of keeping entries that are no longer on the branch.
-      for (const entry of this.getState().sessionExtensionEntries) {
-        entries = mergeExtensionEntry(entries, entry);
-      }
-    }
-    for (const event of replay) entries = mergeExtensionEntry(entries, event.entry);
+    if (sameSession && seq < cursor.seq) return {};
 
-    this.extensionCursor = sameSession ? { sessionId, seq: Math.max(seq, cursor.seq) } : { sessionId, seq };
+    let entries = response.entries;
+    for (const event of replay) entries = mergeExtensionEntry(entries, event.entry);
+    this.extensionCursor = { sessionId, seq };
     // Keep exactly the events this snapshot does not cover, so a later one can bring them forward.
     this.extensionJournal = { sessionId, events: replay };
     return { sessionExtensionEntries: entries };

@@ -280,41 +280,35 @@ describe("SessionController extension entries", () => {
     expect(harness.state().sessionExtensionEntries.map((entry) => entry.entryId)).toEqual(["e1", "e2", "e3"]);
   });
 
-  // Each refresh can be overtaken by a newer event, so "a trailing pass will fix it" is not
-  // enough: the gap entry has to survive both passes.
-  it("keeps a gap entry across two overtaken refreshes", async () => {
-    const first = deferred<typeof emptyPage>();
-    const second = deferred<typeof emptyPage>();
+  // A refresh that is still in flight queues a trailing pass, and each pass can be overtaken by a
+  // newer event, so "the trailing pass will fix it" is not enough: the gap entry has to survive
+  // both passes.
+  it("keeps a gap entry across a refresh and its trailing pass", async () => {
+    const firstMessages = deferred<typeof emptyPage>();
     const harness = createController({ entries: [extensionEntry("e1", 1)], seq: 5 });
     await harness.controller.selectSession(oldSession, { updateUrl: false });
 
-    harness.messages.mockImplementationOnce(() => first.promise);
+    harness.messages.mockImplementationOnce(() => firstMessages.promise);
     harness.extensionEntries.mockImplementationOnce(() =>
       Promise.resolve({ entries: [extensionEntry("e1", 1), extensionEntry("e2", 2)], seq: 6 }),
     );
-    const refreshing = harness.controller.refreshSelectedSession(oldSession.id);
+    const inFlight = harness.controller.refreshSelectedSession(oldSession.id);
     harness.socket.emit(entryEvent("e3", 3, 7));
-    first.resolve(emptyPage);
-    await refreshing;
 
-    harness.messages.mockImplementationOnce(() => second.promise);
+    // Requested while the first pass is still running, so the coordinator queues it as a trailing
+    // pass that reads a later snapshot.
     harness.extensionEntries.mockImplementationOnce(() =>
       Promise.resolve({
         entries: [extensionEntry("e1", 1), extensionEntry("e2", 2), extensionEntry("e3", 3)],
         seq: 8,
       }),
     );
-    const secondRefreshing = harness.controller.refreshSelectedSession(oldSession.id);
-    harness.socket.emit(entryEvent("e4", 4, 9));
-    second.resolve(emptyPage);
-    await secondRefreshing;
+    const trailing = harness.controller.refreshSelectedSession(oldSession.id);
+    firstMessages.resolve(emptyPage);
+    await inFlight;
+    await trailing;
 
-    expect(harness.state().sessionExtensionEntries.map((entry) => entry.entryId)).toEqual([
-      "e1",
-      "e2",
-      "e3",
-      "e4",
-    ]);
+    expect(harness.state().sessionExtensionEntries.map((entry) => entry.entryId)).toEqual(["e1", "e2", "e3"]);
   });
 
   // The subscription reaching the daemon is what makes a read complete, and the browser cannot
@@ -408,6 +402,60 @@ describe("SessionController extension entries", () => {
     await settleMicrotasks();
 
     expect(harness.state().sessionExtensionEntries.map((entry) => entry.entryId)).toEqual(["e1"]);
+  });
+
+  // The session branch is shared: another client or an extension can move it, so a read that a
+  // newer read has already superseded may describe a branch this client has left. Its entries
+  // must not come back.
+  it("does not revive entries an older read reports after a newer branch read", async () => {
+    const harness = createController({ entries: [extensionEntry("e1", 1), extensionEntry("e2", 2)], seq: 5 });
+    await harness.controller.selectSession(oldSession, { updateUrl: false });
+    expect(harness.state().sessionExtensionEntries.map((entry) => entry.entryId)).toEqual(["e1", "e2"]);
+
+    // A read of the old branch is slow and still in flight.
+    const staleBranch = deferred<{ entries: ReturnType<typeof extensionEntry>[]; seq: number }>();
+    harness.extensionEntries.mockImplementationOnce(() => staleBranch.promise);
+    harness.socket.emit({ type: "session.subscribed" });
+
+    // The branch moves elsewhere and a newer read reports only what is on it now.
+    harness.messages.mockImplementationOnce(() => Promise.resolve(emptyPage));
+    harness.extensionEntries.mockImplementationOnce(() =>
+      Promise.resolve({ entries: [extensionEntry("e1", 1)], seq: 9 }),
+    );
+    await harness.controller.refreshSelectedSession(oldSession.id);
+    expect(harness.state().sessionExtensionEntries.map((entry) => entry.entryId)).toEqual(["e1"]);
+
+    staleBranch.resolve({ entries: [extensionEntry("e1", 1), extensionEntry("e2", 2)], seq: 6 });
+    await settle(staleBranch.promise);
+
+    expect(harness.state().sessionExtensionEntries.map((entry) => entry.entryId)).toEqual(["e1"]);
+  });
+
+  // A reconnect can happen while the initial join is still running, so events buffered from the
+  // previous stream must not be replayed onto the new one.
+  it("does not replay join-buffered events from the previous stream after a reconnect", async () => {
+    const joinMessages = deferred<typeof emptyPage>();
+    const harness = createController();
+    // The join reads the old daemon's window, and the reconnect reads the new daemon's.
+    harness.extensionEntries.mockImplementationOnce(() => Promise.resolve({ entries: [extensionEntry("e1", 1)], seq: 49 }));
+    harness.extensionEntries.mockImplementationOnce(() => Promise.resolve({ entries: [extensionEntry("e2", 2)], seq: 2 }));
+    harness.messages.mockImplementationOnce(() => joinMessages.promise);
+
+    const selecting = harness.controller.selectSession(oldSession, { updateUrl: false });
+    // Let the join's own read be issued and start waiting, so the reconnect lands mid-join.
+    await settleMicrotasks();
+    // Buffered by the join, not yet applied.
+    harness.socket.emit(entryEvent("e1", 1, 50));
+
+    // The reconnect's read is queued behind the join's, so the join has to settle first.
+    harness.socket.reconnect();
+    joinMessages.resolve(emptyPage);
+    await selecting;
+    await settleMicrotasks();
+
+    // e1 belongs to the previous stream and is outside the new daemon's window, so the join drain
+    // must not replay it over e2.
+    expect(harness.state().sessionExtensionEntries.map((entry) => entry.entryId)).toEqual(["e2"]);
   });
 
   it("clears extension entries when the session is deselected", async () => {
