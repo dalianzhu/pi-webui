@@ -470,6 +470,7 @@ interface PiWebUiPlugin {
 
 interface PluginHostCapabilities {
   activityRailItems?: true;
+  sessionExtensionEntries?: true;
 }
 
 interface PluginActivationContext {
@@ -568,6 +569,7 @@ interface PluginRuntimeContext {
   state: {
     selectedWorkspace?: Workspace;
     selectedSession?: unknown;
+    sessionExtensionEntries?: readonly SessionExtensionEntry[];
     piWebUiStatus?: PiWebUiStatusResponse;
   };
   prompt: PluginPromptEditor;
@@ -590,7 +592,7 @@ interface PluginRuntimeContext {
 Notes:
 
 - `state` is a snapshot of current UI state when actions are built.
-- The stable state fields are `state.selectedWorkspace`, `state.selectedSession`, and `state.piWebUiStatus`. `state.piWebUiStatus` describes the currently selected machine's PI WEBUI runtime, or the gateway/local runtime when the local machine is selected.
+- The stable state fields are `state.selectedWorkspace`, `state.selectedSession`, `state.sessionExtensionEntries` (described in [Reading session extension entries](#reading-session-extension-entries)), and `state.piWebUiStatus`. `state.piWebUiStatus` describes the currently selected machine's PI WEBUI runtime, or the gateway/local runtime when the local machine is selected.
 - Other `state` fields may exist at runtime, but they are private PI WEBUI internals that may graduate into stable helpers, change shape, or disappear.
 - `enabled` is evaluated when the action palette asks for actions.
 - `selectWorkspaceTool()` expects a qualified panel id such as `my-plugin:workspace.info`.
@@ -1092,6 +1094,53 @@ render: ({ terminal }) => html`
 
 Review command strings carefully. They are trusted shell commands executed in the workspace terminal.
 
+## Reading session extension entries
+
+Pi extensions persist their own state as `custom` session entries, and Pi deliberately keeps those entries out of the model context and out of the conversation transcript. A plugin can read them to render state owned by an extension, for example a plan, a tracker, or an observer.
+
+Entry data belongs to the extension that wrote it. PI WEBUI never interprets `data`; a plugin reads entries by their `customType` and parses the payload it expects.
+
+Support is an additive v1 capability. Check `sessionExtensionEntries` before relying on the state:
+
+```js
+export default {
+  apiVersion: 1,
+  name: "My Plugin",
+  activate: ({ html, capabilities }) => ({
+    contributions: capabilities?.sessionExtensionEntries === true
+      ? { workspacePanels: [{ id: "workspace.tracker", title: "Tracker", render: renderTracker }] }
+      : { workspacePanels: [{ id: "workspace.tracker", title: "Tracker", render: () => html`<p class="muted">Requires a newer PI WEBUI host.</p>` }] },
+  }),
+};
+```
+
+The selected session's entries are on `state.sessionExtensionEntries`, oldest first. This is the selected session's current branch. An archived selection loads history only and reports no entries, so an empty list there does not mean the session never wrote extension state:
+
+```js
+import { html } from "lit";
+
+function renderTracker({ state }) {
+  const entries = (state.sessionExtensionEntries ?? []).filter((entry) => entry.customType === "my-extension");
+  if (entries.length === 0) return html`<p class="muted">No extension state for this session.</p>`;
+  const latest = entries[entries.length - 1];
+  return html`<section class="viewer"><pre>${JSON.stringify(latest.data, null, 2)}</pre></section>`;
+}
+```
+
+Each entry provides:
+
+| Field | Meaning |
+| --- | --- |
+| `customType` | Identifier chosen by the writing extension, forwarded exactly as Pi stored it. Filter on this; other extensions' entries are interleaved. |
+| `data` | Opaque payload written by the extension. Absent when the extension wrote none, or when it could not be forwarded. |
+| `dataOmitted` | `true` when the payload was too large to forward, or when JSON cannot represent it (a function, a symbol, or a cycle). The entry itself is still reported so identity and ordering stay intact. |
+| `entryId` | Session entry id, usable as an identity for the entry. Pi always records one, but a malformed entry without an id is forwarded with an empty string, and such entries have no stable identity to deduplicate on. |
+| `timestamp` | ISO timestamp recorded by Pi, or an empty string for a malformed entry. |
+
+The list is bounded: only the most recent entries per session are forwarded. Treat it as a recent window over the extension's state, not as complete history, and read the extension's own latest entry to derive current state.
+
+Entries update as the extension writes them, so a panel or label re-renders without a page reload. The host also re-reads them when the session daemon confirms the event subscription is live and on each session refresh, because a read taken before the subscription can miss what was written in between. A failed read leaves the previous state in place rather than clearing it. Callback-based contributions such as workspace labels still return synchronously; build labels from this state through the same plugin-owned cache pattern used for other async reads.
+
 ## Private and experimental PI WEBUI APIs
 
 PI WEBUI's `/api/...` HTTP and WebSocket routes and runtime-only fields are private implementation details. They exist because plugins are trusted browser code, and because some capabilities may be evaluated there before they are designed as stable helpers.
@@ -1125,7 +1174,7 @@ If you are an AI agent building or editing a PI WEBUI plugin, follow this checkl
 11. Add Activity Rail activities for focused host-owned dialogs; require an icon and title, and check `workspaceScope` before using it.
 12. Add workspace labels for compact inline metadata.
 13. Return arrays from workspace label `items()`; return an empty array to render nothing.
-14. Use documented context helpers first: `files`, `terminal`, `host.requestRender`, `host.close`, `workspaceScope`, `workspace`, `machine`, `state.selectedWorkspace`, `state.selectedSession`, `state.piWebUiStatus`, and `prompt`.
+14. Use documented context helpers first: `files`, `terminal`, `host.requestRender`, `host.close`, `workspaceScope`, `workspace`, `machine`, `state.selectedWorkspace`, `state.selectedSession`, `state.sessionExtensionEntries`, `state.piWebUiStatus`, and `prompt`.
 15. Do not fetch PI WEBUI `/api/...` endpoints directly unless you intentionally accept private API churn; prefer documented helpers.
 16. Treat plugins as trusted code and avoid reading or displaying secrets unless intentional.
 17. After local edits, tell the user to hard reload the browser and check the console for plugin errors.

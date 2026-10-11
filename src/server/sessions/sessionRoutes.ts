@@ -240,6 +240,14 @@ export function registerSessionRoutes(app: FastifyInstance, sessions: SessionRou
     }
   });
 
+  app.get<{ Params: { sessionId: string }; Querystring: SessionQuery }>(`${prefix}/sessions/:sessionId/extension-entries`, async (request, reply) => {
+    try {
+      return await sessions.extensionEntries(sessionLookupFromQuery(request.params.sessionId, request.query));
+    } catch (error) {
+      return reply.code(404).send({ error: errorMessage(error) });
+    }
+  });
+
   app.get<{ Params: { sessionId: string }; Querystring: SessionQuery }>(`${prefix}/sessions/:sessionId/stream-snapshot`, async (request, reply) => {
     try {
       return await sessions.streamSnapshot(sessionLookupFromQuery(request.params.sessionId, request.query));
@@ -561,6 +569,10 @@ export function registerSessionRoutes(app: FastifyInstance, sessions: SessionRou
     // Only the id matters for event subscription; cwd is intentionally ignored
     // so a malformed value cannot throw inside the websocket handler.
     eventHub.add(request.params.sessionId, socket);
+    // Subscription barrier. A client cannot tell when its subscription became live, yet a read
+    // taken before that moment can miss anything written in between, and the hub does not replay.
+    // Telling the client explicitly lets it re-read state instead of assuming it is current.
+    socket.send(JSON.stringify({ type: "session.subscribed" }));
   });
 
   app.get(`${prefix}/sessions/events`, { websocket: true }, (socket) => {

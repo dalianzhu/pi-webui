@@ -1,9 +1,57 @@
 import { describe, expect, it } from "vitest";
 import { PI_WEBUI_CAPABILITIES } from "../../../shared/capabilities";
-import { SESSION_NOTIFICATION_LIMIT, SESSION_NOTIFICATION_MESSAGE_BYTES, SESSION_UNREAD_CATALOG_ID_MAX_LENGTH } from "../../../shared/apiTypes";
+import { SESSION_EXTENSION_ENTRY_LIMIT, SESSION_NOTIFICATION_LIMIT, SESSION_NOTIFICATION_MESSAGE_BYTES, SESSION_UNREAD_CATALOG_ID_MAX_LENGTH } from "../../../shared/apiTypes";
 import { UTILITY_MODEL_SESSION_ONLY } from "../../../shared/apiTypes";
 import { SPEECH_INPUT_MAX_TRANSCRIPT_BYTES } from "../../../shared/speechInputAudio";
-import { parseAuthProvidersResponse, parseCommandResult, parseFileContentResponse, parseFileSuggestion, parseGitStatusResponse, parseHostSpeechStatus, parseHostSpeechStopResponse, parseHostSpeechTerminalResult, parseLearnedSkillsSnapshotResponse, parseMachineRuntime, parseMemorySnapshotResponse, parseMessagePage, parseModelTierSettingsResponse, parseSpeechInputSettingsResponse, parseSpeechInputTranscribeResponse, parseUtilityModelSettingsResponse, parseOAuthFlowState, parsePiPackageMutationResponse, parsePiPackagesResponse, parsePiWebUiConfigResponse, parsePiWebUiPluginsResponse, parsePiWebUiRuntimeResponse, parsePiWebUiStatusResponse, parseSessionBulkArchiveResponse, parseSessionBulkDeleteArchivedResponse, parseSessionCleanupExecuteResponse, parseSessionCleanupPreviewResponse, parseSessionDefaultsResponse, parseSessionDefaultsV2Response, parseSessionInfo, parseSessionMessageForkResult, parseSessionModelPolicyResponse, parseSessionReorderResponse, parseSessionNotificationInboxEvent, parseSessionNotificationInboxSnapshot, parseSessionStatus, parseSessionStreamSnapshot, parseSessionSystemPrompt, parseSessionTreeNavigateResult, parseSessionTreeSnapshot, parseSessionUnreadCatalogSnapshot, parseSessionUnreadEvent, parseSlashCommand, parseSystemInfoResponse, parseSystemMetricsResponse, parseTerminalCommandRun, parseTerminalInfo, parseWorkspace, parseWorkspaceActivityResponse } from "./parsers";
+import { parseAuthProvidersResponse, parseCommandResult, parseFileContentResponse, parseFileSuggestion, parseGitStatusResponse, parseHostSpeechStatus, parseHostSpeechStopResponse, parseHostSpeechTerminalResult, parseLearnedSkillsSnapshotResponse, parseMachineRuntime, parseMemorySnapshotResponse, parseMessagePage, parseModelTierSettingsResponse, parseSpeechInputSettingsResponse, parseSpeechInputTranscribeResponse, parseUtilityModelSettingsResponse, parseOAuthFlowState, parsePiPackageMutationResponse, parsePiPackagesResponse, parsePiWebUiConfigResponse, parsePiWebUiPluginsResponse, parsePiWebUiRuntimeResponse, parsePiWebUiStatusResponse, parseSessionBulkArchiveResponse, parseSessionBulkDeleteArchivedResponse, parseSessionCleanupExecuteResponse, parseSessionCleanupPreviewResponse, parseSessionDefaultsResponse, parseSessionDefaultsV2Response, parseSessionInfo, parseSessionMessageForkResult, parseSessionModelPolicyResponse, parseSessionReorderResponse, parseSessionNotificationInboxEvent, parseSessionNotificationInboxSnapshot, parseSessionStatus, parseSessionStreamSnapshot, parseSessionExtensionEntries, parseSessionSystemPrompt, parseSessionTreeNavigateResult, parseSessionTreeSnapshot, parseSessionUnreadCatalogSnapshot, parseSessionUnreadEvent, parseSlashCommand, parseSystemInfoResponse, parseSystemMetricsResponse, parseTerminalCommandRun, parseTerminalInfo, parseWorkspace, parseWorkspaceActivityResponse } from "./parsers";
+
+describe("session extension entries parser", () => {
+  const entry = (id: string) => ({ customType: "task-plan", data: { revision: 1 }, entryId: id, timestamp: "2026-01-01T00:00:00.000Z" });
+
+  it("accepts the service bound and rejects a longer list", () => {
+    const atLimit = Array.from({ length: SESSION_EXTENSION_ENTRY_LIMIT }, (_value, index) => entry(`e${String(index)}`));
+    expect(parseSessionExtensionEntries({ entries: atLimit, seq: 3 }).entries).toHaveLength(SESSION_EXTENSION_ENTRY_LIMIT);
+    expect(() => parseSessionExtensionEntries({ entries: [...atLimit, entry("overflow")], seq: 3 })).toThrow(
+      /exceeds limit/,
+    );
+  });
+
+  it("carries the read watermark", () => {
+    expect(parseSessionExtensionEntries({ entries: [], seq: 12 }).seq).toBe(12);
+    expect(() => parseSessionExtensionEntries({ entries: [] })).toThrow(/seq/);
+    expect(() => parseSessionExtensionEntries({ entries: [], seq: -1 })).toThrow(/seq/);
+  });
+
+  it("reports an omitted payload as omitted, not as a payload", () => {
+    expect(
+      parseSessionExtensionEntries({ entries: [{ customType: "task-plan", entryId: "e1", timestamp: "now", dataOmitted: true }], seq: 1 }),
+    ).toEqual({ entries: [{ customType: "task-plan", entryId: "e1", timestamp: "now", dataOmitted: true }], seq: 1 });
+
+    // An extension that wrote no payload is reported without data at all.
+    expect(parseSessionExtensionEntries({ entries: [{ customType: "task-plan", entryId: "e1", timestamp: "now" }], seq: 1 }).entries[0]).not.toHaveProperty("data");
+  });
+
+  it("lets the omission flag win over a payload that is also present", () => {
+    const parsed = parseSessionExtensionEntries({
+      entries: [{ customType: "task-plan", entryId: "e1", timestamp: "now", data: { revision: 1 }, dataOmitted: true }],
+      seq: 1,
+    });
+    expect(parsed.entries[0]).toEqual({ customType: "task-plan", entryId: "e1", timestamp: "now", dataOmitted: true });
+  });
+
+  it("treats an explicit undefined payload as no payload", () => {
+    const parsed = parseSessionExtensionEntries({
+      entries: [{ customType: "task-plan", entryId: "e1", timestamp: "now", data: undefined }],
+      seq: 1,
+    });
+    expect(parsed.entries[0]).not.toHaveProperty("data");
+  });
+
+  it("rejects a non-custom payload and a blank custom type", () => {
+    expect(() => parseSessionExtensionEntries({ entries: [{ customType: "", entryId: "e1", timestamp: "now" }], seq: 1 })).toThrow(/customType/);
+    expect(() => parseSessionExtensionEntries({ entries: [{ entryId: "e1", timestamp: "now" }], seq: 1 })).toThrow(/customType/);
+  });
+});
 
 describe("API parsers", () => {
   it("strictly parses gateway speech transcription responses", () => {

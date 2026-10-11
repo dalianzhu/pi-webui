@@ -96,6 +96,7 @@ export const PI_WEBUI_CAPABILITIES = {
   sessionsClearQueue: "sessions.clearQueue",
   sessionsMessageActions: "sessions.messageActions",
   sessionsSystemPrompt: "sessions.systemPrompt",
+  sessionsExtensionEntries: "sessions.extensionEntries",
   sessionsPersistedState: "sessions.persistedState",
   sessionsNotifications: "sessions.notifications",
   sessionsUnread: "sessions.unread",
@@ -1740,6 +1741,48 @@ export interface MessagePage {
 }
 
 /**
+ * One extension-owned entry from a session's Pi transcript.
+ *
+ * Pi extensions persist their own state as `custom` session entries, and Pi deliberately keeps
+ * those entries out of the model context. PI WEBUI strips them from the conversation projection,
+ * so a browser plugin had no way to render state owned by an extension. These entries carry the
+ * writer's `customType` and an opaque `data` payload, so a plugin can read the state of the
+ * extension that produced it.
+ */
+export interface SessionExtensionEntry {
+  /** Extension identifier chosen by the writer, for example `task-plan`. */
+  customType: string;
+  /** Extension-owned payload. Opaque to PI WEBUI and never interpreted by it. */
+  data?: unknown;
+  /** Set when `data` could not be forwarded: it was too large, or JSON cannot represent it. */
+  dataOmitted?: true;
+  /** Session entry id. Pi always records one; a malformed entry without an id reports "". */
+  entryId: string;
+  /** ISO timestamp recorded by Pi for the entry, or "" for a malformed entry. */
+  timestamp: string;
+}
+
+/** Maximum extension entries returned for one session. Mirrored by the service that enforces it. */
+export const SESSION_EXTENSION_ENTRY_LIMIT = 200;
+
+export interface SessionExtensionEntriesResponse {
+  /**
+   * Oldest first. Bounded by the service: at most `MAX_SESSION_EXTENSION_ENTRIES` entries are
+   * returned, and an entry whose payload exceeds the forwarding limit omits `data`.
+   */
+  entries: SessionExtensionEntry[];
+  /**
+   * Event-stream watermark captured in the same tick as `entries`.
+   *
+   * These entries are read from the session branch, not from the conversation transcript, so a
+   * client cannot tell from a transcript watermark whether an entry it just received is already
+   * included. With this cursor a client replays only extension events with `seq > seq` and drops
+   * the rest, which is what makes the read and the live stream agree.
+   */
+  seq: number;
+}
+
+/**
  * Join-time snapshot of a session's in-flight assistant stream. `seq` is the
  * `SessionEventHub` watermark captured together with `partial` in a single tick,
  * so a joining client can seed `partial` and then apply only buffered live events
@@ -1792,7 +1835,9 @@ type SessionUiEventBody =
   | { type: "status.update"; status: SessionStatus }
   | { type: "activity.update"; activity: SessionActivity }
   | { type: "command.output"; level: "info" | "success" | "error"; message: string; notificationId?: string }
+  | { type: "session.extensionEntry"; entry: SessionExtensionEntry }
   | SessionNotificationInboxEvent
+  | { type: "session.subscribed" }
   | { type: "session.error"; message: string }
   | { type: "session.name"; sessionId: string; name?: string }
   | { type: "session.created"; session: SessionInfo }

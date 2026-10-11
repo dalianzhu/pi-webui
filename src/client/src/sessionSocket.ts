@@ -165,7 +165,7 @@ export function parseRealtimeSocketEvent(event: unknown): BrowserRealtimeEvent |
 }
 
 function isLegacySessionUiEvent(event: unknown): event is SessionUiEvent {
-  return ["message.append", "assistant.delta", "assistant.thinking.delta", "tool.start", "tool.update", "tool.end", "shell.start", "shell.chunk", "shell.end", "agent.start", "agent.end", "message.end", "status.update", "activity.update", "command.output", "session.error", "session.name", "session.created", "pi.event"].includes(eventType(event));
+  return ["message.append", "assistant.delta", "assistant.thinking.delta", "tool.start", "tool.update", "tool.end", "shell.start", "shell.chunk", "shell.end", "agent.start", "agent.end", "message.end", "status.update", "activity.update", "command.output", "session.extensionEntry", "session.subscribed", "session.error", "session.name", "session.created", "pi.event"].includes(eventType(event));
 }
 
 function isLegacyGlobalSessionEvent(event: unknown): event is BrowserGlobalSessionEvent {

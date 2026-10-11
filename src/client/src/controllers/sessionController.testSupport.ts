@@ -57,6 +57,7 @@ export class EmitSocket implements SessionEventSocket {
   readonly connectedSessionIds: string[] = [];
   private handler: ((event: SessionUiEvent) => void) | undefined;
   private onInitialOpen: (() => void) | undefined;
+  private onReconnect: (() => void) | undefined;
 
   connect(
     session: SessionRef,
@@ -68,6 +69,7 @@ export class EmitSocket implements SessionEventSocket {
     this.connectedSessionIds.push(session.id);
     this.handler = onEvent;
     this.onInitialOpen = onInitialOpen;
+    this.onReconnect = _onReconnect;
   }
 
   setHandler(onEvent: (event: SessionUiEvent) => void): void {
@@ -80,6 +82,11 @@ export class EmitSocket implements SessionEventSocket {
 
   open(): void {
     this.onInitialOpen?.();
+  }
+
+  /** Model a socket that dropped and came back, which is how a daemon restart is observed. */
+  reconnect(): void {
+    this.onReconnect?.();
   }
 
   close(): void {

@@ -23,6 +23,7 @@ import type {
   SessionBulkMutationRef,
   SessionCleanupExecuteResponse,
   SessionCleanupPreviewResponse,
+  SessionExtensionEntry,
   SessionInfo,
   SessionMessageForkResult,
   SessionNotificationDismissAllRequest,
@@ -673,6 +674,31 @@ describe("session routes", () => {
     expect(sessionManager.calls).toEqual({ create: 0, list: 0, listAll: 0, open: 0 });
   });
 
+  it("returns a cwd-scoped list of extension entries", async () => {
+    const routeApp = Fastify({ logger: false });
+    await routeApp.register(fastifyWebsocket);
+    const eventHub = new SessionEventHub();
+    const routeService = new CapturingRouteSessionService();
+    routeService.extensionEntriesResponse = [
+      { customType: "task-plan", data: { revision: 2 }, entryId: "e1", timestamp: "2026-01-01T00:00:00.000Z" },
+    ];
+    registerSessionRoutes(routeApp, routeService, eventHub);
+
+    try {
+      const response = await routeApp.inject({ method: "GET", url: "/sessions/session-1/extension-entries?cwd=%2Frepo%2F.%2F" });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({
+        entries: [{ customType: "task-plan", data: { revision: 2 }, entryId: "e1", timestamp: "2026-01-01T00:00:00.000Z" }],
+        seq: 7,
+      });
+      expect(routeService.extensionEntriesCalls).toEqual([{ id: "session-1", cwd: resolve("/repo") }]);
+    } finally {
+      await routeService.dispose();
+      await routeApp.close();
+    }
+  });
+
   it("returns a cwd-scoped system prompt without mutating the session", async () => {
     const routeApp = Fastify({ logger: false });
     await routeApp.register(fastifyWebsocket);
@@ -1256,6 +1282,8 @@ class CapturingRouteSessionService implements SessionRouteService {
   streamSnapshotResponse: SessionStreamSnapshot = { seq: 0, partial: null };
   readonly streamSnapshotCalls: SessionRouteLookup[] = [];
   readonly systemPromptCalls: SessionRouteLookup[] = [];
+  extensionEntriesResponse: SessionExtensionEntry[] = [];
+  readonly extensionEntriesCalls: SessionRouteLookup[] = [];
   readonly cleanupPreviewCalls: NormalizedSessionCleanupRequest[] = [];
   readonly cleanupCalls: NormalizedSessionCleanupRequest[] = [];
   readonly bulkArchiveCalls: SessionBulkMutationRef[][] = [];
@@ -1440,6 +1468,11 @@ class CapturingRouteSessionService implements SessionRouteService {
   systemPrompt(lookup: SessionRouteLookup): Promise<{ systemPrompt?: string }> {
     this.systemPromptCalls.push(lookup);
     return Promise.resolve({ systemPrompt: "Use the project conventions." });
+  }
+
+  extensionEntries(lookup: SessionRouteLookup): Promise<{ entries: SessionExtensionEntry[]; seq: number }> {
+    this.extensionEntriesCalls.push(lookup);
+    return Promise.resolve({ entries: this.extensionEntriesResponse, seq: 7 });
   }
 
   availableModels(): Promise<[]> { return Promise.resolve([]); }
