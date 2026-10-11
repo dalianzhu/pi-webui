@@ -2,8 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import type {
   UtilityModelBinding,
   UtilityModelSettings,
-  UtilityModelSettingsResponseV2,
+  UtilityModelSettingsResponseV3,
 } from "../../shared/apiTypes.js";
+import { UTILITY_MODEL_SESSION_ONLY } from "../../shared/apiTypes.js";
 import { createUtilityModelSettingsService, type UtilityModelSettingsConfig } from "./utilityModelSettingsService.js";
 
 interface TestModel {
@@ -28,7 +29,7 @@ describe("utility model settings service", () => {
     const harness = createHarness({ utilityModels: configuredSettings });
 
     await expect(harness.service.inspect()).resolves.toEqual({
-      contractVersion: 2,
+      contractVersion: 3,
       settings: configuredSettings,
       models: [
         {
@@ -52,7 +53,7 @@ describe("utility model settings service", () => {
     const response = await createHarness({ utilityModels: {} }).service.inspect();
 
     expect(response).toEqual({
-      contractVersion: 2,
+      contractVersion: 3,
       settings: {},
       models: modelOptions(),
       slots: validSlots(),
@@ -68,12 +69,13 @@ describe("utility model settings service", () => {
     const response = await createHarness({ utilityModels: settings }).service.inspect();
 
     expect(response).toMatchObject({
-      contractVersion: 2,
+      contractVersion: 3,
       settings,
       slots: validSlots(),
       valid: true,
     });
-    expect(response.settings.context?.thinkingLevel).toBeUndefined();
+    const context = response.settings.context;
+    expect(context === UTILITY_MODEL_SESSION_ONLY ? undefined : context?.thinkingLevel).toBeUndefined();
   });
 
   it("retains stale configured references and invalidates only their slots", async () => {
@@ -85,7 +87,7 @@ describe("utility model settings service", () => {
     const response = await createHarness({ utilityModels: settings }).service.inspect();
 
     expect(response.settings).toEqual(settings);
-    expect(response.contractVersion).toBe(2);
+    expect(response.contractVersion).toBe(3);
     expect(response.valid).toBe(false);
     expect(response.slots).toEqual({
       lightweight: { valid: false, reason: "lightweight utility model acme/ghost is unavailable" },
@@ -116,7 +118,7 @@ describe("utility model settings service", () => {
     const response = await createHarness({ utilityModelsError: "utilityModels.lightweight.id is required" }).service.inspect();
 
     expect(response).toEqual({
-      contractVersion: 2,
+      contractVersion: 3,
       configError: "utilityModels.lightweight.id is required",
       settings: {},
       models: modelOptions(),
@@ -232,9 +234,76 @@ describe("utility model settings service", () => {
 
     expect(harness.saveConfig).not.toHaveBeenCalled();
   });
+
+  it("treats the Context sentinel as valid and inspected", async () => {
+    const harness = createHarness({ utilityModels: { context: UTILITY_MODEL_SESSION_ONLY } });
+
+    await expect(harness.service.inspect()).resolves.toEqual({
+      contractVersion: 3,
+      settings: { context: "session" },
+      models: modelOptions(),
+      slots: validSlots(),
+      valid: true,
+    });
+  });
+
+  it("updates to the sentinel, back to a binding, and back to unset", async () => {
+    const harness = createHarness({ utilityModels: configuredSettings });
+    const contextBinding = { provider: "acme", id: "large", thinkingLevel: "max" } satisfies UtilityModelBinding;
+
+    const toSentinel = await harness.service.update({ context: UTILITY_MODEL_SESSION_ONLY });
+    expect(toSentinel).toMatchObject({
+      contractVersion: 3,
+      settings: { context: UTILITY_MODEL_SESSION_ONLY },
+      slots: validSlots(),
+      valid: true,
+    });
+    expect(harness.config().utilityModels?.context).toBe(UTILITY_MODEL_SESSION_ONLY);
+
+    const toBinding = await harness.service.update({ context: contextBinding });
+    expect(toBinding).toMatchObject({
+      contractVersion: 3,
+      settings: { context: contextBinding },
+      slots: validSlots(),
+      valid: true,
+    });
+    expect(harness.config().utilityModels?.context).toEqual(contextBinding);
+
+    const toUnset = await harness.service.update({ context: null });
+    expect(toUnset).toMatchObject({ contractVersion: 3, valid: true });
+    expect(harness.config().utilityModels?.context).toBeUndefined();
+    expect(harness.saveConfig).toHaveBeenCalledTimes(3);
+  });
+
+  it("keeps the sentinel across a save and reload cycle", async () => {
+    const harness = createHarness({ utilityModels: configuredSettings });
+
+    await harness.service.update({ context: UTILITY_MODEL_SESSION_ONLY });
+
+    await expect(harness.service.inspect()).resolves.toMatchObject({
+      contractVersion: 3,
+      settings: { context: UTILITY_MODEL_SESSION_ONLY },
+      slots: { context: { valid: true } },
+      valid: true,
+    });
+  });
+
+  it("joins invalid slots with the sentinel present", async () => {
+    const harness = createHarness({
+      utilityModels: {
+        lightweight: { provider: "acme", id: "ghost" },
+        context: UTILITY_MODEL_SESSION_ONLY,
+      },
+    });
+
+    await expect(harness.service.update({ context: UTILITY_MODEL_SESSION_ONLY }))
+      .rejects.toThrow("lightweight utility model acme/ghost is unavailable");
+
+    expect(harness.saveConfig).not.toHaveBeenCalled();
+  });
 });
 
-function modelOptions(): UtilityModelSettingsResponseV2["models"] {
+function modelOptions(): UtilityModelSettingsResponseV3["models"] {
   return [
     {
       model: { provider: "acme", id: "small" },
@@ -249,14 +318,14 @@ function modelOptions(): UtilityModelSettingsResponseV2["models"] {
   ];
 }
 
-function validSlots(): UtilityModelSettingsResponseV2["slots"] {
+function validSlots(): UtilityModelSettingsResponseV3["slots"] {
   return {
     lightweight: { valid: true },
     context: { valid: true },
   };
 }
 
-function invalidSlots(reason: string): UtilityModelSettingsResponseV2["slots"] {
+function invalidSlots(reason: string): UtilityModelSettingsResponseV3["slots"] {
   return {
     lightweight: { valid: false, reason },
     context: { valid: false, reason },

@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { parseUtilityModelsConfig } from "../../config.js";
 import { PiWebUiConfigMutationBusyError } from "../../configMutationCoordinator.js";
-import { UTILITY_MODEL_SLOTS, type UtilityModelSettingsUpdate, type UtilityModelSlot } from "../../shared/apiTypes.js";
+import { UTILITY_MODEL_SESSION_ONLY, UTILITY_MODEL_SLOTS, type UtilityModelSettingsUpdate, type UtilityModelSlot } from "../../shared/apiTypes.js";
 import type { UtilityModelSettingsService } from "./utilityModelSettingsService.js";
 
 export interface UtilityModelSettingsRouteService {
@@ -45,17 +45,24 @@ function parseSettingsUpdate(value: unknown): UtilityModelSettingsUpdate {
   if (unknownSlot !== undefined) throw new Error(`unknown utility model slot ${JSON.stringify(unknownSlot)}`);
 
   const update: UtilityModelSettingsUpdate = {};
-  for (const slot of UTILITY_MODEL_SLOTS) {
-    if (!Object.prototype.hasOwnProperty.call(value, slot)) continue;
-    if (value[slot] === null) {
-      update[slot] = null;
-      continue;
+  if (Object.prototype.hasOwnProperty.call(value, "lightweight")) {
+    const lightweight = value["lightweight"];
+    if (lightweight === null) update.lightweight = null;
+    else {
+      const parsed = parseUtilityModelsConfig({ lightweight }, "request body settings").lightweight;
+      if (parsed === undefined) throw new Error("lightweight utility model reference is required");
+      update.lightweight = parsed;
     }
-
-    const parsed = parseUtilityModelsConfig({ [slot]: value[slot] }, "request body settings");
-    const reference = parsed[slot];
-    if (reference === undefined) throw new Error(`${slot} utility model reference is required`);
-    update[slot] = reference;
+  }
+  if (Object.prototype.hasOwnProperty.call(value, "context")) {
+    const context = value["context"];
+    if (context === null) update.context = null;
+    else if (context === UTILITY_MODEL_SESSION_ONLY) update.context = UTILITY_MODEL_SESSION_ONLY;
+    else {
+      const parsed = parseUtilityModelsConfig({ context }, "request body settings").context;
+      if (parsed === undefined) throw new Error("context utility model reference is required");
+      update.context = parsed;
+    }
   }
   return update;
 }
