@@ -66,7 +66,7 @@ function makeFactory(owner: ModelRateLimitOwner, delegate: StreamFn) {
       testModelRuntime,
       sessionGateway([]),
       {
-        inspect: vi.fn().mockResolvedValue({ candidates: [] }),
+        inspect: vi.fn().mockResolvedValue({ candidates: [], sessionModelOnly: false }),
         configuredCandidates: vi.fn().mockResolvedValue([]),
       },
       { info: vi.fn() },
@@ -150,6 +150,7 @@ describe("PiSessionService rate limit integration", () => {
       {
         inspect: vi.fn().mockResolvedValue({
           candidates: [{ model: candidate, thinkingLevel: "high", slot: "lightweight" }],
+          sessionModelOnly: false,
         }),
         configuredCandidates: vi.fn().mockResolvedValue([
           { model: candidate, thinkingLevel: "high", slot: "lightweight" },

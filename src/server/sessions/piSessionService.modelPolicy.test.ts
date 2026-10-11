@@ -107,6 +107,7 @@ function fallbackResolver(input: {
   return {
     inspect: vi.fn<UtilityResolver["inspect"]>().mockResolvedValue({
       candidates,
+      sessionModelOnly: false,
       ...(input.unavailable === undefined ? {} : { unavailable: input.unavailable }),
     }),
     configuredCandidates: vi.fn<UtilityResolver["configuredCandidates"]>().mockResolvedValue(candidates),
@@ -493,7 +494,7 @@ function createModelPolicyHarness(options: ModelPolicyHarnessOptions = {}) {
     return Promise.resolve();
   });
   const defaultUtilityModelResolver: UtilityResolver = {
-    inspect: () => Promise.resolve({ candidates: [], unavailable: { reason: "slot-unset" } }),
+    inspect: () => Promise.resolve({ candidates: [], sessionModelOnly: false, unavailable: { reason: "slot-unset" } }),
     configuredCandidates: () => Promise.resolve([]),
   };
   const utilityModelResolver = options.utilityModelResolver ?? defaultUtilityModelResolver;
@@ -1213,6 +1214,7 @@ describe("PiSessionService model policy lifecycle", () => {
       inspected = true;
       return Promise.resolve({
         candidates: [{ ...LIGHTWEIGHT_CANDIDATE, slot: "lightweight" as const }],
+        sessionModelOnly: false,
       });
     });
     const harness = createModelPolicyHarness({
