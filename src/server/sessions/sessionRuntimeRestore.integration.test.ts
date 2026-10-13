@@ -1,9 +1,11 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
+import { InMemoryCredentialStore, type AssistantMessage } from "@earendil-works/pi-ai";
 import {
+  createAgentSessionRuntime,
   SessionManager,
+  type CreateAgentSessionRuntimeFactory,
   type ModelRuntime,
 } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -11,6 +13,7 @@ import type { ExactModelSelection } from "../../shared/apiTypes.js";
 import {
   PiSessionService,
   type PiSessionLogger,
+  type PiSessionRuntime,
   type PiSessionServiceDependencies,
 } from "./piSessionService.js";
 import { createPiSessionManagerGateway } from "./piSessionManagerGateway.js";
@@ -33,12 +36,18 @@ const NEW_SELECTION: ExactModelSelection = {
   thinkingLevel: "high",
 };
 
+interface IntegrationHarnessOptions {
+  /** Record every constructed runtime by session id (for Pi's replacement methods). */
+  captureRuntimes?: boolean;
+}
+
 interface IntegrationHarness {
   service: PiSessionService;
   gateway: ReturnType<typeof createPiSessionManagerGateway>;
   credentials: InMemoryCredentialStore;
   modelRuntime: ModelRuntime;
   loggerInfo: ReturnType<typeof vi.fn>;
+  runtimes: Map<string, PiSessionRuntime>;
   cwd: string;
   agentDir: string;
   sessionDir: string;
@@ -54,7 +63,48 @@ afterEach(async () => {
   }
 });
 
-async function createIntegrationHarness(): Promise<IntegrationHarness> {
+/**
+ * Mirror `defaultCreateAgentRuntime` while recording the constructed runtime.
+ * The factory (and therefore the restore hook) is still the service's default;
+ * only the returned runtime object is captured for `_recordSelection` tests.
+ */
+function passThroughRuntimeCreator(
+  runtimes: Map<string, PiSessionRuntime>,
+): NonNullable<PiSessionServiceDependencies["createAgentRuntime"]> {
+  return async (createRuntime, options) => {
+    if (!(options.sessionManager instanceof SessionManager))
+      throw new Error("Default runtime creation requires an SDK SessionManager");
+    let pendingModel = options.initialModel;
+    let pendingThinkingLevel = options.initialThinkingLevel;
+    let pendingDelegationToolsEnabled: boolean | undefined =
+      options.delegationToolsEnabled;
+    const runtimeFactory: CreateAgentSessionRuntimeFactory = async (factoryOptions) => {
+      const model = pendingModel;
+      const thinkingLevel = pendingThinkingLevel;
+      const delegationToolsEnabled = pendingDelegationToolsEnabled;
+      pendingModel = undefined;
+      pendingThinkingLevel = undefined;
+      pendingDelegationToolsEnabled = undefined;
+      return createRuntime({
+        ...factoryOptions,
+        ...(model === undefined ? {} : { initialModel: model }),
+        ...(thinkingLevel === undefined ? {} : { initialThinkingLevel: thinkingLevel }),
+        ...(delegationToolsEnabled === undefined ? {} : { delegationToolsEnabled }),
+      });
+    };
+    const runtime = await createAgentSessionRuntime(runtimeFactory, {
+      cwd: options.cwd,
+      agentDir: options.agentDir,
+      sessionManager: options.sessionManager,
+    });
+    runtimes.set(options.sessionManager.getSessionId(), runtime);
+    return runtime;
+  };
+}
+
+async function createIntegrationHarness(
+  options: IntegrationHarnessOptions = {},
+): Promise<IntegrationHarness> {
   const tempDir = await mkdtemp(join(tmpdir(), "pi-webui-runtime-restore-"));
   const cwd = join(tempDir, "workspace");
   const agentDir = join(tempDir, "agent");
@@ -76,6 +126,11 @@ async function createIntegrationHarness(): Promise<IntegrationHarness> {
     inspect: () => Promise.resolve({ candidates: [], sessionModelOnly: false }),
     configuredCandidates: () => Promise.resolve([]),
   };
+  const runtimes = new Map<string, PiSessionRuntime>();
+  const createAgentRuntime =
+    options.captureRuntimes === true
+      ? passThroughRuntimeCreator(runtimes)
+      : undefined;
   const service = new PiSessionService(new CapturingSessionEventHub(), {
     agentDir,
     sessionManager: gateway,
@@ -89,6 +144,7 @@ async function createIntegrationHarness(): Promise<IntegrationHarness> {
       validate: () => ({ valid: true }),
     },
     heartbeatIntervalMs: 60_000,
+    ...(createAgentRuntime === undefined ? {} : { createAgentRuntime }),
   });
   const harness: IntegrationHarness = {
     service,
@@ -96,6 +152,7 @@ async function createIntegrationHarness(): Promise<IntegrationHarness> {
     credentials,
     modelRuntime,
     loggerInfo,
+    runtimes,
     cwd,
     agentDir,
     sessionDir,
@@ -134,6 +191,26 @@ function appendSelection(
     SESSION_MODEL_POLICY_CUSTOM_TYPE,
     serializeSessionModelPolicy({ mode: "exact", exact: selection }),
   );
+}
+
+function assistantMessageNaming(model: { provider: string; id: string }): AssistantMessage {
+  return {
+    role: "assistant",
+    content: [{ type: "text", text: "done" }],
+    api: "anthropic-messages",
+    provider: model.provider,
+    model: model.id,
+    usage: {
+      input: 1,
+      output: 1,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 2,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    stopReason: "stop",
+    timestamp: 2,
+  };
 }
 
 /**
@@ -359,5 +436,180 @@ describe("session runtime restore integration", () => {
 
     expect(first).toMatch(/^MODEL_POLICY_BLOCKED: /u);
     expect(second).toBe(first);
+  });
+
+  it("passes the derived tuple to Pi's message-less initial appends", async () => {
+    const harness = await createIntegrationHarness();
+    await writeFile(
+      join(harness.agentDir, "settings.json"),
+      JSON.stringify({
+        defaultProvider: OLD_SELECTION.model.provider,
+        defaultModel: OLD_SELECTION.model.id,
+        defaultThinkingLevel: "medium",
+      }),
+      "utf8",
+    );
+    const { ref, path } = await startPlusSession(harness);
+    appendSelection(openSdkManager(harness, path), NEW_SELECTION);
+
+    await harness.service.reload(ref);
+
+    const entries = openSdkManager(harness, path).getEntries();
+    const newestModelChange = entries.filter((entry) => entry.type === "model_change").at(-1);
+    const newestThinking = entries.filter((entry) => entry.type === "thinking_level_change").at(-1);
+    expect(newestModelChange).toMatchObject({
+      provider: NEW_SELECTION.model.provider,
+      modelId: NEW_SELECTION.model.id,
+    });
+    expect(newestThinking).toMatchObject({ thinkingLevel: NEW_SELECTION.thinkingLevel });
+  });
+
+  it("passes the derived level to Pi's missing-thinking-entry append", async () => {
+    const harness = await createIntegrationHarness();
+    const { ref, path } = await startPlusSession(harness);
+    const manager = openSdkManager(harness, path);
+    manager.resetLeaf();
+    const userEntryId = manager.appendMessage({ role: "user", content: "root question", timestamp: 1 });
+    manager.appendThinkingLevelChange("high");
+    manager.branch(userEntryId);
+    manager.appendModelChange(NEW_SELECTION.model.provider, NEW_SELECTION.model.id);
+    manager.appendCustomEntry(
+      SESSION_MODEL_POLICY_CUSTOM_TYPE,
+      serializeSessionModelPolicy({ mode: "exact", exact: NEW_SELECTION }),
+    );
+
+    await harness.service.reload(ref);
+
+    const newestThinking = openSdkManager(harness, path)
+      .getBranch()
+      .filter((entry) => entry.type === "thinking_level_change")
+      .at(-1);
+    expect(newestThinking).toMatchObject({ thinkingLevel: "high" });
+    expect((await harness.service.status(ref)).modelPolicy?.resolved).toEqual(NEW_SELECTION);
+  });
+
+  it("does not false-arm when Pi records a virtual selection", async () => {
+    const harness = await createIntegrationHarness({ captureRuntimes: true });
+    const virtualModel = { provider: "ext-virtual", id: "virtual-1" };
+    harness.modelRuntime.registerVirtualModel({
+      provider: virtualModel.provider,
+      id: virtualModel.id,
+      name: "Virtual One",
+      thinkingLevels: ["off"],
+      route: () => {
+        throw new Error("route is not exercised");
+      },
+    });
+    const { ref, path } = await startPlusSession(harness);
+    const manager = openSdkManager(harness, path);
+    const userEntryId = manager.appendMessage({ role: "user", content: "hello", timestamp: 1 });
+    const physicalModelId = manager.appendModelChange(OLD_SELECTION.model.provider, OLD_SELECTION.model.id);
+    manager.branch(userEntryId);
+    manager.appendModelChange(virtualModel.provider, virtualModel.id);
+    manager.appendThinkingLevelChange("off");
+    manager.appendCustomEntry(
+      SESSION_MODEL_POLICY_CUSTOM_TYPE,
+      serializeSessionModelPolicy({
+        mode: "exact",
+        exact: { model: virtualModel, thinkingLevel: "off" },
+      }),
+    );
+    manager.branch(physicalModelId);
+    manager.appendMessage(assistantMessageNaming(OLD_SELECTION.model));
+
+    await harness.service.reload(ref);
+
+    const expectedSelection = { model: virtualModel, thinkingLevel: "off" };
+    let status = await harness.service.status(ref);
+    expect(status.modelPolicy?.resolved).toEqual(expectedSelection);
+    expect(status.modelPolicy?.blockedReason).toBeUndefined();
+
+    const runtime = harness.runtimes.get(ref.id);
+    if (runtime === undefined) throw new Error("Expected a captured runtime");
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Pi's private selection hook is the mechanism this test pins.
+    (runtime.session as unknown as { _recordSelection(): void })._recordSelection();
+
+    const newestModelChange = openSdkManager(harness, path)
+      .getEntries()
+      .filter((entry) => entry.type === "model_change")
+      .at(-1);
+    expect(newestModelChange).toMatchObject({
+      provider: virtualModel.provider,
+      modelId: virtualModel.id,
+    });
+
+    await harness.service.reload(ref);
+    status = await harness.service.status(ref);
+    expect(status.modelPolicy?.blockedReason).toBeUndefined();
+    expect(status.modelPolicy?.resolved).toEqual(expectedSelection);
+  });
+
+  it("keeps the policy, live tuple, and transcript unchanged across Edit from here", async () => {
+    const harness = await createIntegrationHarness();
+    const { ref, path } = await startPlusSession(harness);
+    const manager = openSdkManager(harness, path);
+    const userEntryId = manager.appendMessage({ role: "user", content: "edit me", timestamp: 1 });
+
+    // The runtime must see the appended entry before navigation; the seed
+    // manager is a separate SDK SessionManager opened from the durable file.
+    await harness.service.reload(ref);
+
+    const before = await harness.service.modelPolicy(ref);
+    const entriesBefore = openSdkManager(harness, path).getEntries().length;
+
+    await harness.service.editFromHere(ref, userEntryId);
+
+    const after = await harness.service.modelPolicy(ref);
+    expect(after.policy).toEqual(before.policy);
+    expect(after.session.model).toEqual(before.session.model);
+    expect(after.session.modelPolicy?.resolved).toEqual(before.session.modelPolicy?.resolved);
+    expect(after.session.modelPolicy?.blockedReason).toBe(before.session.modelPolicy?.blockedReason);
+    expect(openSdkManager(harness, path).getEntries()).toHaveLength(entriesBefore);
+  });
+
+  it("arms the forked session's own block for a copied disagreement", async () => {
+    const harness = await createIntegrationHarness();
+    const { ref, path } = await startPlusSession(harness);
+    const manager = openSdkManager(harness, path);
+    manager.appendModelChange(NEW_SELECTION.model.provider, NEW_SELECTION.model.id);
+    manager.appendThinkingLevelChange(NEW_SELECTION.thinkingLevel);
+    const userEntryId = manager.appendMessage({ role: "user", content: "fork here", timestamp: 3 });
+
+    await harness.service.reload(ref);
+    expect((await harness.service.status(ref)).modelPolicy?.blockedReason)
+      .toMatch(/^MODEL_POLICY_BLOCKED: /u);
+
+    const result = await harness.service.forkFromHere(ref, userEntryId);
+    expect(result.cancelled).toBe(false);
+    if (result.cancelled) {
+      throw new Error("Expected a forked session");
+    }
+    const forkedStatus = await harness.service.status({ id: result.session.id, cwd: harness.cwd });
+    expect(forkedStatus.modelPolicy?.blockedReason).toMatch(/^MODEL_POLICY_BLOCKED: /u);
+    expect((await harness.service.status(ref)).modelPolicy?.blockedReason)
+      .toMatch(/^MODEL_POLICY_BLOCKED: /u);
+  });
+
+  it("arms the cloned session's own block for a copied disagreement", async () => {
+    const harness = await createIntegrationHarness();
+    const { ref, path } = await startPlusSession(harness);
+    const manager = openSdkManager(harness, path);
+    manager.appendModelChange(NEW_SELECTION.model.provider, NEW_SELECTION.model.id);
+    manager.appendThinkingLevelChange(NEW_SELECTION.thinkingLevel);
+    manager.appendMessage({ role: "user", content: "clone here", timestamp: 3 });
+
+    await harness.service.reload(ref);
+    expect((await harness.service.status(ref)).modelPolicy?.blockedReason)
+      .toMatch(/^MODEL_POLICY_BLOCKED: /u);
+
+    const result = await harness.service.runCommand(ref, "/clone");
+    expect(result.type).toBe("done");
+    if (result.type !== "done" || result.session === undefined) {
+      throw new Error("Expected a cloned session");
+    }
+    const clonedStatus = await harness.service.status({ id: result.session.id, cwd: harness.cwd });
+    expect(clonedStatus.modelPolicy?.blockedReason).toMatch(/^MODEL_POLICY_BLOCKED: /u);
+    expect((await harness.service.status(ref)).modelPolicy?.blockedReason)
+      .toMatch(/^MODEL_POLICY_BLOCKED: /u);
   });
 });
