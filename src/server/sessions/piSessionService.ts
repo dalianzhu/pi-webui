@@ -5777,6 +5777,9 @@ export class PiSessionService implements SessionRouteService {
       ...(existingBlock === undefined ? {} : { existingBlock }),
     });
 
+    // A message-less blocked transcript takes Pi's new-session branch and gains
+    // its fallback model/thinking pair, so a later credentials-return open reads
+    // a disagreement and recovers only through an explicit policy update.
     if (plan.kind === "none") return {};
     if (plan.kind === "block") {
       this.modelPolicyRuntimeBlocks.set(input.sessionId, {
