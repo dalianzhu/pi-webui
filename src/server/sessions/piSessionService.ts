@@ -2624,16 +2624,20 @@ export class PiSessionService implements SessionRouteService {
     await this.runSessionEntryMutation(
       session,
       "deliver a subsession notification",
-      () =>
-        session.sendCustomMessage(
+      () => {
+        const blocked =
+          this.modelPolicyBlockedReason(session) !== undefined ||
+          this.isModelPolicyMutationActive(session);
+        return session.sendCustomMessage(
           {
             customType: SUBSESSION_NOTIFICATION_CUSTOM_TYPE,
             content: notification.text,
             display: true,
             details: { sessionId: notification.childId },
           },
-          { triggerTurn: true, deliverAs: "followUp" }
-        )
+          { triggerTurn: !blocked, deliverAs: "followUp" }
+        );
+      }
     );
     this.publishStatus(session);
   }
