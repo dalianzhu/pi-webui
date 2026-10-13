@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { PiSessionService, type PiAgentSession } from "./piSessionService.js";
+import { SESSION_MODEL_POLICY_CUSTOM_TYPE } from "./sessionModelPolicy.js";
 import type { SpawnTargetDecision } from "./spawnTargetResolver.js";
 import { CapturingSessionEventHub, emptyArchiveStore, fakeRuntime, fakeSessionManager, runtimeCreator, sessionGateway, sessionRecord, sessionRef, testModel, testModelRuntime, type RuntimeCreator } from "./piSessionService.testSupport.js";
 
@@ -1068,6 +1069,67 @@ describe("PiSessionService", () => {
       expect(parent.calls.sendCustomMessage[0]?.message.customType).toBe("subsession.completion");
       expect(parent.calls.sendCustomMessage[0]?.options).toEqual({ triggerTurn: true, deliverAs: "followUp" });
       expect(parent.calls.prompt).toHaveLength(0); // not a user-authored message
+      await service.dispose();
+    });
+
+    it("delivers a notification without a turn to a blocked parent", async () => {
+      const { parent, child, service } = subsessionService({ allowed: true, cwd: "/workspace-feature" });
+      await service.start("/workspace");
+      parent.session.sessionManager = fakeSessionManager("/workspace", {
+        getBranch: () => [{
+          type: "custom",
+          customType: SESSION_MODEL_POLICY_CUSTOM_TYPE,
+          data: { version: 99 },
+        }],
+      });
+      // Cache a fresh inspection so the gate reads the invalid-entry reason without re-reading.
+      await service.modelPolicy(sessionRef("parent-1", "/workspace"));
+
+      await service.spawnSubsession({ spawningCwd: "/workspace", parentSessionId: "parent-1", parentSessionFile: "/tmp/parent-1.jsonl", prompt: "go", cwd: "/workspace-feature" });
+      child.session.isStreaming = true;
+      child.emit({ type: "agent_start" });
+      child.session.isStreaming = false;
+      child.emit({ type: "agent_end" });
+
+      await vi.waitFor(() => {
+        expect(parent.calls.sendCustomMessage).toHaveLength(1);
+      });
+      expect(parent.calls.sendCustomMessage[0]?.message.content).toContain("Subsession child-1 stopped working");
+      expect(parent.calls.sendCustomMessage[0]?.options).toEqual({ triggerTurn: false, deliverAs: "followUp" });
+      await service.dispose();
+    });
+
+    it("delivers a notification without a turn while a policy mutation is active", async () => {
+      const { parent, child, service } = subsessionService({ allowed: true, cwd: "/workspace-feature" });
+      const model = testModel();
+      parent.session.scopedModels = [{ model }];
+      let releaseSetModel: (() => void) | undefined;
+      const gate = new Promise<void>((resolve) => { releaseSetModel = resolve; });
+      let setModelStarted = false;
+      parent.session.setModel = async (nextModel) => {
+        setModelStarted = true;
+        parent.session.model = nextModel;
+        await gate;
+      };
+      await service.start("/workspace");
+      await service.spawnSubsession({ spawningCwd: "/workspace", parentSessionId: "parent-1", parentSessionFile: "/tmp/parent-1.jsonl", prompt: "go", cwd: "/workspace-feature" });
+
+      const transition = service.setModel(sessionRef("parent-1", "/workspace"), model.provider, model.id);
+      await vi.waitFor(() => { expect(setModelStarted).toBe(true); });
+
+      child.session.isStreaming = true;
+      child.emit({ type: "agent_start" });
+      child.session.isStreaming = false;
+      child.emit({ type: "agent_end" });
+
+      await vi.waitFor(() => {
+        expect(parent.calls.sendCustomMessage).toHaveLength(1);
+      });
+      expect(parent.calls.sendCustomMessage[0]?.options).toEqual({ triggerTurn: false, deliverAs: "followUp" });
+
+      releaseSetModel?.();
+
+      await transition;
       await service.dispose();
     });
 

@@ -68,11 +68,13 @@ export function fakeSessionManager(cwd = "/workspace", patch: FakeSessionManager
     return `entry-${String(nextEntryId++)}`;
   };
   const appendCustomEntry = "appendCustomEntry" in patch ? appendCustomEntryPatch : defaultAppendCustomEntry;
+  const getBranch = patch.getBranch ?? (() => branch);
   return {
     getCwd: () => cwd,
     getSessionId: () => "session-1",
     getSessionFile: () => undefined,
-    getBranch: () => branch,
+    getBranch,
+    getEntries: () => getBranch(),
     getLeafId: () => "leaf-1",
     ...(appendCustomEntry === undefined ? {} : { appendCustomEntry }),
     ...rest,
