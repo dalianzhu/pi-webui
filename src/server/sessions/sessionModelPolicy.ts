@@ -25,15 +25,19 @@ export type SessionModelPolicyInspection =
   | { kind: "persisted"; policy: SessionModelPolicy }
   | { kind: "invalid"; reason: string; fallback: SessionModelPolicy };
 
+export type PersistedSessionModelPolicyInspection =
+  | { kind: "none" }
+  | { kind: "invalid"; reason: string }
+  | { kind: "persisted"; policy: SessionModelPolicy };
+
 export interface SessionModelPolicyPlan {
   policy: SessionModelPolicy;
   target: ExactModelSelection;
 }
 
-export function inspectSessionModelPolicy(
+export function readPersistedSessionModelPolicy(
   entries: readonly unknown[],
-  fallback: ExactModelSelection,
-): SessionModelPolicyInspection {
+): PersistedSessionModelPolicyInspection {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index];
     if (!isPolicyEntry(entry)) continue;
@@ -44,11 +48,26 @@ export function inspectSessionModelPolicy(
       return {
         kind: "invalid",
         reason: error instanceof Error ? error.message : String(error),
-        fallback: exactPolicy(fallback),
       };
     }
   }
 
+  return { kind: "none" };
+}
+
+export function inspectSessionModelPolicy(
+  entries: readonly unknown[],
+  fallback: ExactModelSelection,
+): SessionModelPolicyInspection {
+  const inspection = readPersistedSessionModelPolicy(entries);
+  if (inspection.kind === "persisted") return inspection;
+  if (inspection.kind === "invalid") {
+    return {
+      kind: "invalid",
+      reason: inspection.reason,
+      fallback: exactPolicy(fallback),
+    };
+  }
   return { kind: "legacy", policy: exactPolicy(fallback) };
 }
 

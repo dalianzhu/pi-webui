@@ -5,6 +5,7 @@ import {
   inspectSessionModelPolicy,
   planSessionModelPolicyInitialization,
   planSessionModelPolicyUpdate,
+  readPersistedSessionModelPolicy,
   serializeSessionModelPolicy,
 } from "./sessionModelPolicy.js";
 
@@ -75,6 +76,48 @@ describe("session model policy domain", () => {
       ["an unsupported mode", { ...serializeSessionModelPolicy(exactPolicy()), mode: "automatic" }],
     ] as const)("rejects %s", (_description, data) => {
       expect(inspectSessionModelPolicy([policyEntry(data)], fallback)).toMatchObject({ kind: "invalid" });
+    });
+  });
+
+  describe("readPersistedSessionModelPolicy", () => {
+    it("returns none when no policy entry exists", () => {
+      expect(readPersistedSessionModelPolicy([])).toEqual({ kind: "none" });
+      expect(readPersistedSessionModelPolicy([
+        { type: "message", message: "not a policy" },
+        { type: "custom", customType: "other.custom", data: { version: 1 } },
+      ])).toEqual({ kind: "none" });
+    });
+
+    it("returns the newest valid entry without inventing a fallback", () => {
+      const policy = exactPolicy({ model: { id: "gpt-newer" }, thinkingLevel: "high" });
+
+      expect(readPersistedSessionModelPolicy([
+        policyEntry(serializeSessionModelPolicy(exactPolicy())),
+        policyEntry(serializeSessionModelPolicy(policy)),
+      ])).toEqual({ kind: "persisted", policy });
+    });
+
+    it("returns the malformed newest entry's reason", () => {
+      expect(readPersistedSessionModelPolicy([policyEntry({ version: 99 })])).toEqual({
+        kind: "invalid",
+        reason: "unsupported policy version",
+      });
+      expect(readPersistedSessionModelPolicy([
+        policyEntry(serializeSessionModelPolicy(exactPolicy())),
+        policyEntry({ version: 99 }),
+      ])).toEqual({ kind: "invalid", reason: "unsupported policy version" });
+    });
+
+    it("keeps the wrapper's legacy and invalid fallback behavior", () => {
+      expect(inspectSessionModelPolicy([], fallback)).toEqual({
+        kind: "legacy",
+        policy: { mode: "exact", exact: fallback },
+      });
+      expect(inspectSessionModelPolicy([policyEntry({ version: 99 })], fallback)).toEqual({
+        kind: "invalid",
+        reason: "unsupported policy version",
+        fallback: { mode: "exact", exact: fallback },
+      });
     });
   });
 
