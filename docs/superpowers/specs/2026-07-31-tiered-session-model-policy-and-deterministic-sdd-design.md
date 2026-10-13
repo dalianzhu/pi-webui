@@ -6,6 +6,16 @@
 
 **Supersedes:** [Exact subsession model and thinking selection](./2026-07-30-exact-subsession-model-thinking-selection-design.md) and its [implementation plan](../plans/2026-07-30-exact-subsession-model-thinking-selection.md).
 
+> **Superseded in part (2026-10-13):** Model-selection authority is session-level, not
+> branch-scoped. The newest `model_change`/`thinking_level_change` and the newest
+> `pi-webui.model-policy` entry in the whole session transcript are authoritative, regardless of the
+> active conversation branch. This supersedes the statements that "Fork, clone, resume, and tree
+> navigation derive policy from the active session branch", that "Reads inspect the active branch.
+> The latest matching entry is authoritative", the `inspectSession(branch, runtimeSelection)`
+> signature, and the acceptance item "Resume/fork/clone/tree navigation use active-branch policy".
+> Fork and clone still inherit the copied branch's selection, because their transcript contains only
+> that branch. See `2026-10-13-session-level-model-authority-design.md`.
+
 ## Goal
 
 Give every PI WEBUI session an explicit model-selection mode:
@@ -138,7 +148,7 @@ Switching to a remembered valid branch applies immediately and atomically while 
 - Both child tools inherit the parent's complete policy snapshot.
 - An Exact child therefore inherits the parent exact tuple and ignores tier directives.
 - A Tiered child inherits the parent tier, then may apply a leading tier directive before its first request.
-- Fork, clone, resume, and tree navigation derive policy from the active session branch.
+- Fork, clone, resume, and tree navigation derive policy from the active session branch. (Superseded in part 2026-10-13 — see the supersession note above.)
 
 ### Complete machine-owned ladder
 
@@ -479,7 +489,7 @@ remembered exact tuple
 remembered tier, when one exists
 ```
 
-Reads inspect the active branch. The latest matching entry is authoritative. A malformed or unsupported latest entry fails closed; no older value or runtime fallback replaces it silently.
+Reads inspect the active branch. The latest matching entry is authoritative. A malformed or unsupported latest entry fails closed; no older value or runtime fallback replaces it silently. (Superseded in part 2026-10-13 — see the supersession note above.)
 
 A legacy session with no matching entry derives:
 
@@ -684,6 +694,8 @@ planRequest(policy, parsedInput, ladder): PolicyApplicationPlan;
 planUiTransition(policy, request, ladder): PolicyApplicationPlan;
 inheritForChild(parentPolicy): SessionModelPolicy;
 ```
+
+(Superseded in part 2026-10-13 — see the supersession note above.)
 
 A plan carries all values the effectful runtime adapter needs:
 
@@ -1223,7 +1235,7 @@ Evaluation harnesses handle real credentials. A harness that seeds an isolated a
 10. Clear-queue discards retained requests; a daemon restart drops them without replay.
 11. Exact model/thinking set and cycle routes update remembered Exact only in Exact mode.
 12. UI mode switch applies a complete policy.
-13. Resume/fork/clone/tree navigation use active-branch policy.
+13. Resume/fork/clone/tree navigation use active-branch policy. (Superseded in part 2026-10-13 — see the supersession note above.)
 14. Mapping changes apply at next request boundary, not mid-run.
 
 ### Child and idempotency tests
