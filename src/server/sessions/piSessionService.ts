@@ -190,6 +190,7 @@ import {
   inspectSessionModelPolicy,
   planSessionModelPolicyInitialization,
   planSessionModelPolicyUpdate,
+  readPersistedSessionModelPolicy,
   serializeSessionModelPolicy,
   SessionModelPolicyResolutionError,
   SESSION_MODEL_POLICY_CUSTOM_TYPE,
@@ -200,6 +201,11 @@ import {
   fallbackSessionModelPolicy,
   initialPolicyUnavailableError,
 } from "./sessionModelPolicyFallback.js";
+import {
+  inspectSessionRuntimeSelection,
+  planSessionRuntimeRestore,
+  type SessionRuntimeBlockCause,
+} from "./sessionRuntimeRestore.js";
 import {
   inspectSessionCreationRootEligibility,
   inspectSessionCreationSource,
@@ -1207,6 +1213,11 @@ export interface PiSessionServiceDependencies {
   clearParentSession?: (sessionFile: string) => Promise<void>;
 }
 
+interface ModelPolicyRuntimeBlock {
+  cause: SessionRuntimeBlockCause;
+  reason: string;
+}
+
 export class PiSessionService implements SessionRouteService {
   private readonly active = new Map<string, ActiveSession<PiSessionRuntime>>();
   /**
@@ -1258,7 +1269,10 @@ export class PiSessionService implements SessionRouteService {
    * is daemon-owned: it survives a runtime rebind, a reload, and a close/reopen
    * of the same session, none of which prove anything about the ambiguous tuple.
    */
-  private readonly modelPolicyRuntimeBlocks = new Map<string, string>();
+  private readonly modelPolicyRuntimeBlocks = new Map<
+    string,
+    ModelPolicyRuntimeBlock
+  >();
   /**
    * Sessions inside the apply-and-persist window of a policy transition. During
    * that window the runtime tuple is transient (model set, thinking not yet, or
@@ -1448,7 +1462,8 @@ export class PiSessionService implements SessionRouteService {
           : {
               inspect: (sessionId) => this.modelPolicyCapability(sessionId),
             },
-        deps.modelRateLimitOwner
+        deps.modelRateLimitOwner,
+        { prepare: (input) => this.prepareSessionRuntimeRestore(input) }
       );
     this.createAgentRuntime =
       deps.createAgentRuntime ?? defaultCreateAgentRuntime;
@@ -5698,10 +5713,126 @@ export class PiSessionService implements SessionRouteService {
   private modelPolicyBlockedReason(
     session: PiAgentSession
   ): string | undefined {
-    return (
-      this.modelPolicyRuntimeBlocks.get(session.sessionId) ??
-      this.modelPolicyEntryReasons.get(session)
-    );
+    const block = this.modelPolicyRuntimeBlocks.get(session.sessionId);
+    if (block !== undefined) return `MODEL_POLICY_BLOCKED: ${block.reason}`;
+    return this.modelPolicyEntryReasons.get(session);
+  }
+
+  /**
+   * Restore the session-level recorded model selection into a fresh runtime.
+   * Runs after `createServices` has registered extension providers/models and
+   * before `createFromServices`, so a virtual or extension model is resolvable.
+   */
+  private async prepareSessionRuntimeRestore(input: {
+    sessionId: string;
+    sessionManager: PiSessionManager;
+    modelRuntime: ModelRuntime;
+    explicitModel?: AgentModel;
+    explicitThinkingLevel?: ClientThinkingLevel;
+  }): Promise<{ model?: AgentModel; thinkingLevel?: ClientThinkingLevel }> {
+    if (
+      input.explicitModel !== undefined ||
+      input.explicitThinkingLevel !== undefined
+    ) {
+      return {};
+    }
+
+    const entries =
+      input.sessionManager.getEntries?.() ?? input.sessionManager.getBranch();
+    const selection = inspectSessionRuntimeSelection(entries);
+    if (selection.kind === "none") return {};
+
+    const persistedPolicy = readPersistedSessionModelPolicy(entries);
+
+    let boundModel: AgentModel | undefined;
+    let resolvedModel:
+      | { provider: string; id: string; thinkingLevels: readonly string[] }
+      | undefined;
+    if (selection.kind === "selection") {
+      const bound = await this.resolveSessionRuntimeRestoreModel(
+        input.modelRuntime,
+        input.sessionId,
+        selection.model
+      );
+      boundModel = bound?.model;
+      resolvedModel =
+        bound === undefined
+          ? undefined
+          : {
+              provider: bound.model.provider,
+              id: bound.model.id,
+              thinkingLevels: bound.thinkingLevels,
+            };
+    }
+
+    const existingBlock = this.modelPolicyRuntimeBlocks.get(input.sessionId);
+    const plan = planSessionRuntimeRestore({
+      selection,
+      persistedPolicy,
+      ...(resolvedModel === undefined ? {} : { resolvedModel }),
+      ...(existingBlock === undefined ? {} : { existingBlock }),
+    });
+
+    if (plan.kind === "none") return {};
+    if (plan.kind === "block") {
+      this.modelPolicyRuntimeBlocks.set(input.sessionId, {
+        cause: plan.cause,
+        reason: plan.reason,
+      });
+      return {};
+    }
+    if (boundModel === undefined)
+      throw new Error(
+        "session runtime restore produced an apply plan without a bound model"
+      );
+    if (plan.clearSelectionUnavailable) {
+      this.modelPolicyRuntimeBlocks.delete(input.sessionId);
+    }
+    const thinkingLevel =
+      plan.thinkingLevel !== undefined && isKnownThinkingLevel(plan.thinkingLevel)
+        ? plan.thinkingLevel
+        : undefined;
+    return {
+      model: boundModel,
+      ...(thinkingLevel === undefined ? {} : { thinkingLevel }),
+    };
+  }
+
+  /**
+   * Bind the recorded selection to the runtime catalog. Resolves first, then
+   * makes one `allowNetwork: false` refresh on a miss or a missing auth answer;
+   * a refresh rejection is logged and treated as unbindable.
+   */
+  private async resolveSessionRuntimeRestoreModel(
+    modelRuntime: ModelRuntime,
+    sessionId: string,
+    selection: { provider: string; id: string }
+  ): Promise<{ model: AgentModel; thinkingLevels: readonly string[] } | undefined> {
+    const bound = this.boundSessionRuntimeRestoreModel(modelRuntime, selection);
+    if (bound !== undefined) return bound;
+    try {
+      await modelRuntime.refresh({ allowNetwork: false });
+    } catch (error: unknown) {
+      this.logger.info(
+        {
+          sessionId,
+          model: `${selection.provider}/${selection.id}`,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "session runtime restore model refresh failed"
+      );
+      return undefined;
+    }
+    return this.boundSessionRuntimeRestoreModel(modelRuntime, selection);
+  }
+
+  private boundSessionRuntimeRestoreModel(
+    modelRuntime: ModelRuntime,
+    selection: { provider: string; id: string }
+  ): { model: AgentModel; thinkingLevels: readonly string[] } | undefined {
+    const model = modelRuntime.getModel(selection.provider, selection.id);
+    if (model === undefined || !modelRuntime.hasConfiguredAuth(model.provider)) return undefined;
+    return { model, thinkingLevels: runtimeThinkingLevels(model) };
   }
 
   /** Root-session policy initialization, completed before the root is visible. */
@@ -6000,10 +6131,10 @@ export class PiSessionService implements SessionRouteService {
         } catch (error: unknown) {
           const reason = error instanceof Error ? error.message : String(error);
           if (!(await this.restoreExactSelection(session, previous))) {
-            this.modelPolicyRuntimeBlocks.set(
-              session.sessionId,
-              `MODEL_POLICY_BLOCKED: ${reason}; the previous model and thinking pair could not be restored`
-            );
+            this.modelPolicyRuntimeBlocks.set(session.sessionId, {
+              cause: "runtime-tuple-unproven",
+              reason: `${reason}; the previous model and thinking pair could not be restored`,
+            });
           }
           this.inspectAndCacheSessionModelPolicy(session);
           options.onTransitionFailure?.(reason);
@@ -6114,7 +6245,7 @@ export class PiSessionService implements SessionRouteService {
     const inspection = this.inspectAndCacheSessionModelPolicy(session);
     const runtimeBlock = this.modelPolicyRuntimeBlocks.get(session.sessionId);
     if (runtimeBlock !== undefined)
-      throw new Error(`Cannot ${action}: ${runtimeBlock}`);
+      throw new Error(`Cannot ${action}: MODEL_POLICY_BLOCKED: ${runtimeBlock.reason}`);
     if (inspection.kind === "invalid") {
       throw new Error(
         `Cannot ${action}: the session model policy entry is invalid (${inspection.reason}). Repair the policy first.`
@@ -6161,10 +6292,10 @@ export class PiSessionService implements SessionRouteService {
             const reason =
               error instanceof Error ? error.message : String(error);
             if (!(await this.restoreExactSelection(session, previous))) {
-              this.modelPolicyRuntimeBlocks.set(
-                session.sessionId,
-                `MODEL_POLICY_BLOCKED: ${reason}; the previous model and thinking pair could not be restored`
-              );
+              this.modelPolicyRuntimeBlocks.set(session.sessionId, {
+                cause: "runtime-tuple-unproven",
+                reason: `${reason}; the previous model and thinking pair could not be restored`,
+              });
             }
             this.inspectAndCacheSessionModelPolicy(session);
             // Only a failure that already moved the runtime tuple is announced; an
@@ -6195,7 +6326,7 @@ export class PiSessionService implements SessionRouteService {
     const inspection = this.inspectAndCacheSessionModelPolicy(session);
     const runtimeBlock = this.modelPolicyRuntimeBlocks.get(session.sessionId);
     if (runtimeBlock !== undefined)
-      throw new Error(`Cannot send a prompt: ${runtimeBlock}`);
+      throw new Error(`Cannot send a prompt: MODEL_POLICY_BLOCKED: ${runtimeBlock.reason}`);
     if (inspection.kind === "invalid") {
       throw new Error(
         `Cannot send a prompt: the session model policy entry is invalid (${inspection.reason}). Repair the policy first.`
