@@ -5589,8 +5589,8 @@ export class PiSessionService implements SessionRouteService {
     };
   }
 
-  private policyEntries(session: PiAgentSession): readonly unknown[] {
-    return session.sessionManager.getBranch();
+  private sessionTranscriptEntries(session: PiAgentSession): readonly unknown[] {
+    return session.sessionManager.getEntries?.() ?? session.sessionManager.getBranch();
   }
 
   private async confirmedPolicySnapshot(
@@ -5602,11 +5602,10 @@ export class PiSessionService implements SessionRouteService {
     const manager = persisted
       ? this.sessionManager.open(sessionFile)
       : session.sessionManager;
-    const activeEntries = manager.getBranch();
-    // Creation provenance belongs to the durable root file, even when its
-    // original entry is not on the currently selected conversation branch.
-    const creationSourceEntries = manager.getEntries?.() ?? activeEntries;
-    const creationSource = inspectSessionCreationSource(creationSourceEntries);
+    // Creation provenance belongs to the durable root file, even when its original entry is not on the
+    // currently selected conversation branch. The model policy now reads the same session-level list.
+    const entries = manager.getEntries?.() ?? manager.getBranch();
+    const creationSource = inspectSessionCreationSource(entries);
     return {
       cwd: canonicalizeStoredCwd(manager.getCwd()),
       creationSource,
@@ -5616,7 +5615,7 @@ export class PiSessionService implements SessionRouteService {
         creationSource
       ),
       modelPolicy: inspectSessionModelPolicy(
-        activeEntries,
+        entries,
         this.exactSelectionFromSession(session)
       ),
       transitionInFlight: this.isModelPolicyMutationActive(session),
@@ -5660,7 +5659,7 @@ export class PiSessionService implements SessionRouteService {
     session: PiAgentSession
   ): SessionModelPolicyInspection {
     const inspection = inspectSessionModelPolicy(
-      this.policyEntries(session),
+      this.sessionTranscriptEntries(session),
       this.exactSelectionFromSession(session)
     );
     const ladderValidation = this.modelTierRegistry.validate();
@@ -6336,7 +6335,7 @@ export class PiSessionService implements SessionRouteService {
       })
     );
     const inspection = inspectSessionCreationSource(
-      this.policyEntries(session)
+      this.sessionTranscriptEntries(session)
     );
     const rootEligibility = this.sessionCreationRootEligibility(
       session.sessionManager,

@@ -116,6 +116,8 @@ function fallbackResolver(input: {
 
 interface ModelPolicyHarnessOptions {
   branch?: readonly unknown[];
+  /** Distinct durable/append-order entry list; defaults to the active branch. */
+  durableEntries?: readonly unknown[];
   existing?: boolean;
   persistedFile?: boolean;
   parentSession?: string;
@@ -238,7 +240,7 @@ function createModelPolicyHarness(options: ModelPolicyHarnessOptions = {}) {
   /** Runtime/persistence operations in the order the adapter performed them. */
   const calls: string[] = [];
   const getBranch = vi.fn(() => branch);
-  const getEntries = vi.fn(() => branch);
+  const getEntries = vi.fn(() => options.durableEntries ?? branch);
   const settingsState: {
     durable: string;
     phase: "construct" | "target" | "restore";
@@ -557,6 +559,7 @@ function createModelPolicyHarness(options: ModelPolicyHarnessOptions = {}) {
     durableTranscriptPresent: () => durableTranscriptPresent,
     fake,
     getBranch,
+    getEntries,
     hub,
     logger: loggerProvider,
     manager,
@@ -865,18 +868,18 @@ describe("PiSessionService model policy lifecycle", () => {
     const harness = createModelPolicyHarness();
 
     await harness.service.status(sessionRef(TEST_SESSION_ID, TEST_CWD));
-    const branchReadsAfterCreate = harness.getBranch.mock.calls.length;
+    const entryReadsAfterCreate = harness.getEntries.mock.calls.length;
     expect(harness.validate).toHaveBeenCalledOnce();
 
     await harness.service.status(sessionRef(TEST_SESSION_ID, TEST_CWD));
     await harness.service.status(sessionRef(TEST_SESSION_ID, TEST_CWD));
     harness.fake.emit({ type: "message_update" });
 
-    expect(harness.getBranch).toHaveBeenCalledTimes(branchReadsAfterCreate);
+    expect(harness.getEntries).toHaveBeenCalledTimes(entryReadsAfterCreate);
     expect(harness.validate).toHaveBeenCalledOnce();
 
     await harness.service.modelPolicy(sessionRef(TEST_SESSION_ID, TEST_CWD));
-    expect(harness.getBranch).toHaveBeenCalledTimes(branchReadsAfterCreate + 1);
+    expect(harness.getEntries).toHaveBeenCalledTimes(entryReadsAfterCreate + 1);
     expect(harness.validate).toHaveBeenCalledTimes(2);
   });
 
@@ -1691,7 +1694,7 @@ describe("PiSessionService model policy lifecycle", () => {
 });
 
 describe("PiSessionService real SessionManager plus-root integration", () => {
-  it("reopens durable root metadata and remembers the active policy after branch navigation", async () => {
+  it("reopens durable root metadata and remembers the newest append-order policy after branch navigation", async () => {
     const integrationDir = mkdtempSync(
       join(TEST_SESSION_DIR, "real-session-manager-")
     );
@@ -1905,17 +1908,17 @@ describe("PiSessionService real SessionManager plus-root integration", () => {
     ).toBe(false);
     await expect(
       service.modelPolicy({ id: created.id, cwd: integrationCwd })
-    ).resolves.toMatchObject({ policy: activePolicy });
+    ).resolves.toMatchObject({ policy: abandonedPolicy });
     await expect(
       service.rememberCurrentModelPolicy({
         id: created.id,
         cwd: integrationCwd,
       })
-    ).resolves.toEqual(activePolicy);
+    ).resolves.toEqual(abandonedPolicy);
     expect(preferenceStore.replace).toHaveBeenCalledTimes(2);
     expect(preferenceStore.replace).toHaveBeenLastCalledWith(integrationCwd, {
       kind: "full",
-      preference: activePolicy,
+      preference: abandonedPolicy,
     });
   });
 });
@@ -1939,13 +1942,13 @@ describe("PiSessionService model policy mutation", () => {
     });
     const before = await harness.service.modelPolicy(ref());
     if (before.policy === undefined) throw new Error("expected a confirmed model policy");
-    const branchReadsBeforeRemember = harness.getBranch.mock.calls.length;
+    const entryReadsBeforeRemember = harness.getEntries.mock.calls.length;
     harness.calls.length = 0;
 
     await expect(harness.service.rememberCurrentModelPolicy(ref()))
       .rejects.toThrow("preference store unavailable");
 
-    expect(harness.getBranch).toHaveBeenCalledTimes(branchReadsBeforeRemember + 1);
+    expect(harness.getEntries).toHaveBeenCalledTimes(entryReadsBeforeRemember + 1);
     const after = await harness.service.modelPolicy(ref());
     expect(after).toEqual(before);
     expect(after.policy).toEqual({
@@ -1958,6 +1961,33 @@ describe("PiSessionService model policy mutation", () => {
       kind: "full",
       preference: before.policy,
     });
+  });
+
+  it("reads the newest append-order policy while the active branch holds an older one", async () => {
+    const abandonedPolicy = {
+      mode: "tiered",
+      exact: DEFAULT_SELECTION,
+      tier: "frontier",
+    } as const;
+    const activePolicy = {
+      mode: "exact",
+      exact: DEFAULT_SELECTION,
+      tier: "standard",
+    } as const;
+    const harness = createModelPolicyHarness({
+      branch: [policyEntry({ version: 1, ...activePolicy })],
+      durableEntries: [
+        creationSourceEntry(),
+        policyEntry({ version: 1, ...abandonedPolicy }),
+      ],
+      preferenceStore: { replace: vi.fn(() => Promise.resolve()) },
+    });
+    await harness.service.status(ref());
+
+    await expect(harness.service.modelPolicy(ref()))
+      .resolves.toMatchObject({ policy: abandonedPolicy });
+    await expect(harness.service.rememberCurrentModelPolicy(ref()))
+      .resolves.toEqual(abandonedPolicy);
   });
 
   it("rejects remember for an in-memory plus root whose JSONL is absent", async () => {
