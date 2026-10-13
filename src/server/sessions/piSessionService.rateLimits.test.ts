@@ -74,6 +74,7 @@ function makeFactory(owner: ModelRateLimitOwner, delegate: StreamFn) {
       undefined,
       undefined,
       owner,
+      undefined,
       { createServices, createFromServices },
     ),
   };
@@ -161,6 +162,7 @@ describe("PiSessionService rate limit integration", () => {
       undefined,
       undefined,
       owner,
+      undefined,
       { createServices, createFromServices },
     );
 

@@ -926,6 +926,16 @@ type PiWebUiRuntimeFactoryOptions =
     initialThinkingLevel?: ClientThinkingLevel;
   };
 
+export interface SessionRuntimeRestore {
+  prepare(input: {
+    sessionId: string;
+    sessionManager: PiSessionManager;
+    modelRuntime: ModelRuntime;
+    explicitModel?: AgentModel;
+    explicitThinkingLevel?: ClientThinkingLevel;
+  }): Promise<{ model?: AgentModel; thinkingLevel?: ClientThinkingLevel }>;
+}
+
 type PiWebUiCreateAgentSessionRuntimeFactory = (
   options: PiWebUiRuntimeFactoryOptions
 ) => ReturnType<CreateAgentSessionRuntimeFactory>;
@@ -1030,6 +1040,7 @@ export function createDefaultRuntimeFactory(
   subsessions?: SubsessionToolDeps,
   modelPolicy?: ModelPolicyToolDeps,
   modelRateLimitOwner?: ModelRateLimitOwner,
+  restore?: SessionRuntimeRestore,
   sdk: PiWebUiAgentSessionSdk = {
     createServices: createAgentSessionServices,
     createFromServices: createAgentSessionFromServices,
@@ -1073,15 +1084,27 @@ export function createDefaultRuntimeFactory(
       subsessions,
       modelPolicy
     );
+    const derived =
+      restore === undefined
+        ? undefined
+        : await restore.prepare({
+            sessionId: sessionManager.getSessionId(),
+            sessionManager,
+            modelRuntime,
+            ...(initialModel === undefined ? {} : { explicitModel: initialModel }),
+            ...(initialThinkingLevel === undefined
+              ? {}
+              : { explicitThinkingLevel: initialThinkingLevel }),
+          });
+    const model = initialModel ?? derived?.model;
+    const thinkingLevel = initialThinkingLevel ?? derived?.thinkingLevel;
     const result = await sdk.createFromServices({
       services,
       sessionManager,
       customTools,
       ...(sessionStartEvent === undefined ? {} : { sessionStartEvent }),
-      ...(initialModel === undefined ? {} : { model: initialModel }),
-      ...(initialThinkingLevel === undefined
-        ? {}
-        : { thinkingLevel: initialThinkingLevel }),
+      ...(model === undefined ? {} : { model }),
+      ...(thinkingLevel === undefined ? {} : { thinkingLevel }),
     });
     const delegateStreamFunction = result.session.agent.streamFunction;
     const limitedStreamFunction = modelRateLimitOwner === undefined
