@@ -33,15 +33,19 @@ The request and processed-token allowances shared by calls through one PI WEBUI 
 _Avoid_: Global rate limit, provider-wide limit, per-session limit
 
 **Session model policy**:
-A session's active Exact or Tiered mode together with its remembered exact model selection and remembered tier.
+A session's active Exact or Tiered mode together with its remembered exact model selection and remembered tier. It is session-level state: the newest policy entry in the session transcript is authoritative regardless of the active conversation branch, so tree navigation and Edit from here do not change it.
 _Avoid_: Model group, model category
+
+**Session runtime selection**:
+The newest model and thinking level recorded in the session transcript, used to restore a session's runtime when it is reopened. It is read in append order and is independent of the active conversation branch; it is never inferred from assistant responses.
+_Avoid_: Branch model, last response model
 
 **Starter model policy preference**:
 A personal, machine-local, workspace-scoped full policy used to initialize the next root created through SESSIONS `+`. It owns the active mode, remembered exact model selection, and remembered tier.
 _Avoid_: Global model policy, project policy
 
 **Remembered policy selection**:
-A stored Exact selection or model tier that represents user intent and is validated when its branch is active. Temporary unavailability does not erase or replace it.
+A stored Exact selection or model tier that represents user intent and is validated when its Exact or Tiered mode branch is active. Temporary unavailability does not erase or replace it.
 _Avoid_: Available default, fallback model
 
 **Plus-created root session**:

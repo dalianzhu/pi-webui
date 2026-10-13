@@ -311,7 +311,12 @@ export type SessionModelPolicyUpdate =
 export interface ClientSessionModelPolicyStatus {
   mode: SessionModelPolicyMode;
   tier?: ModelTier;
-  /** The tuple last confirmed by the policy runtime adapter in this staged slice. */
+  /**
+   * The tuple last confirmed by the policy runtime adapter in this staged slice; outside a
+   * transition it is the live runtime tuple, which a reopen can restore from the transcript's newest
+   * recorded selection. While a block is active it can be Pi's branch-restore fallback rather than
+   * the recorded selection.
+   */
   resolved: ExactModelSelection;
   ladderValid: boolean;
   blockedReason?: string;
