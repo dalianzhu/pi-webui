@@ -40,6 +40,21 @@ describe("project identity", () => {
     });
   });
 
+  it("keeps the documented Pi Coding Agent requirement aligned with the supported peer range", () => {
+    // Each user-facing surface states the Pi version users must satisfy. Deriving the range from
+    // the peer dependency keeps a future Pi bump from updating package.json while these drift.
+    const supportedRange = packageManifest.peerDependencies["@earendil-works/pi-coding-agent"];
+    const escapedRange = supportedRange.replaceAll(">", "&gt;").replaceAll("<", "&lt;");
+
+    expect(readFileSync(join(repositoryRoot, "README.md"), "utf8")).toContain(`Pi Coding Agent \`${supportedRange}\``);
+    expect(readFileSync(join(repositoryRoot, "docs", "install.html"), "utf8")).toContain(
+      `Pi Coding Agent <code>${escapedRange}</code>`,
+    );
+    expect(readFileSync(join(repositoryRoot, "docs", "index.html"), "utf8")).toContain(
+      `Pi Coding Agent ${supportedRange}`,
+    );
+  });
+
   it("uses fast local defaults while preserving serial final verification", () => {
     expect(packageManifest.scripts).toMatchObject({
       test: "vitest run --config vitest.config.ts --maxWorkers=4",
