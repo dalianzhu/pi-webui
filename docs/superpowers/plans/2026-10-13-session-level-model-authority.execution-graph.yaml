@@ -1,0 +1,510 @@
+schema_version: 1
+run_id: pm-run-20261013-061048-983022fb
+epoch: 1
+source_plan:
+  path: docs/superpowers/plans/2026-10-13-session-level-model-authority.md
+  sha256: d04367d4e1fd576d584f3009ae90a6f4aa8ecfccc59bd30120f2c6add11f6f86
+  commit_oid: 31c3198370b224e8888456c026dc390b8931fcd4
+  task_numbers:
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    - 6
+    - 7
+    - 8
+    - 9
+  validator_exit: 0
+  validator_digest: d04367d4e1fd576d584f3009ae90a6f4aa8ecfccc59bd30120f2c6add11f6f86
+lanes:
+  - id: pure-domain
+    task_ids:
+      - T1
+      - T2
+    sequences:
+      - 1
+      - 2
+  - id: service-authority
+    task_ids:
+      - T3
+      - T4
+      - T5
+      - T6
+    sequences:
+      - 1
+      - 2
+      - 3
+      - 4
+  - id: integration-coverage
+    task_ids:
+      - T7
+    sequences:
+      - 1
+  - id: docs-release
+    task_ids:
+      - T8
+      - T9
+    sequences:
+      - 1
+      - 2
+tasks:
+  - id: T1
+    plan_task: 1
+    title: Fallback-free persisted policy read
+    lane: pure-domain
+    sequence: 1
+    implementer_tier: fast
+    depends_on: []
+    ownership:
+      - src/server/sessions/sessionModelPolicy.ts
+      - src/server/sessions/sessionModelPolicy.test.ts
+    exclusive_resources: []
+    interfaces:
+      consumes: []
+      produces:
+        - name: persisted-session-model-policy-inspection
+          signature: 'PersistedSessionModelPolicyInspection = { kind: "none" } | { kind: "invalid"; reason: string } | { kind: "persisted"; policy: SessionModelPolicy }'
+          digest: 577678feeb083b2e80c7f6c1bb6129874217ca21f1c27371c2f44dd34e5bc2e0
+        - name: read-persisted-session-model-policy
+          signature: 'readPersistedSessionModelPolicy(entries: readonly unknown[]): PersistedSessionModelPolicyInspection returns the newest policy entry in reverse append order, its malformed reason, or { kind: "none" } without inventing a fallback'
+          digest: a064e96b208d38852c8b1d91bf0f457604ab7a51b0fb2fed72313c88960bda47
+        - name: inspect-session-model-policy-compat-wrapper
+          signature: 'inspectSessionModelPolicy(entries: readonly unknown[], fallback: ExactModelSelection): SessionModelPolicyInspection keeps its exact signature and its legacy and invalid fallback behavior'
+          digest: 1dba502639571c4ff3c04c5bd4b30a222771350df7fd5b71afd9b59cf591e1a0
+    validation:
+      - argv:
+          - npm
+          - test
+          - --
+          - --run
+          - src/server/sessions/sessionModelPolicy.test.ts
+        mutates_git: false
+      - argv:
+          - npm
+          - run
+          - typecheck
+        mutates_git: false
+      - argv:
+          - npx
+          - eslint
+          - src/server/sessions/sessionModelPolicy.ts
+          - src/server/sessions/sessionModelPolicy.test.ts
+        mutates_git: false
+  - id: T2
+    plan_task: 2
+    title: Pure session runtime restore reader and planner
+    lane: pure-domain
+    sequence: 2
+    implementer_tier: standard
+    depends_on:
+      - T1
+    ownership:
+      - src/server/sessions/sessionRuntimeRestore.ts
+      - src/server/sessions/sessionRuntimeRestore.test.ts
+    exclusive_resources: []
+    interfaces:
+      consumes:
+        - interface: persisted-session-model-policy-inspection
+          from: T1
+          digest: 577678feeb083b2e80c7f6c1bb6129874217ca21f1c27371c2f44dd34e5bc2e0
+      produces:
+        - name: session-runtime-selection-inspection
+          signature: 'SessionRuntimeSelectionInspection = { kind: "none" } | { kind: "invalid"; reason: string } | { kind: "selection"; model: { provider: string; id: string }; thinkingLevel?: string }'
+          digest: b8f7c06c9ca752f8a1506737491ee41cd85fa619ad604811d48a41a9df26b661
+        - name: inspect-session-runtime-selection
+          signature: 'inspectSessionRuntimeSelection(entries: readonly unknown[]): SessionRuntimeSelectionInspection reads the newest model_change and thinking_level_change in append order, ignores branch links, and returns none when no model change is recorded'
+          digest: 188f17311fa4b22380b8c6a03d309454a954bfc8dddebec5df36297e7b2e44a8
+        - name: session-runtime-block-cause
+          signature: 'SessionRuntimeBlockCause = "selection-unavailable" | "runtime-tuple-unproven"'
+          digest: ef5e984e3458afadb9c1a5bf1f8b0c0c0a2e5cba262fe15ddd680c2efbd468ad
+        - name: session-runtime-restore-plan
+          signature: 'SessionRuntimeRestorePlan = { kind: "none" } | { kind: "apply"; model: { provider: string; id: string }; thinkingLevel?: string; clearSelectionUnavailable: boolean } | { kind: "block"; cause: SessionRuntimeBlockCause; reason: string }'
+          digest: 42d5b1770df8fe807dfd538ca68d7920a2582f7507fbaf8b3cf3a86503c004b2
+        - name: plan-session-runtime-restore
+          signature: 'planSessionRuntimeRestore(input: { selection: SessionRuntimeSelectionInspection; persistedPolicy: PersistedSessionModelPolicyInspection; resolvedModel?: { provider: string; id: string; thinkingLevels: readonly string[] }; existingBlock?: { cause: SessionRuntimeBlockCause; reason: string } }): SessionRuntimeRestorePlan is total and pure and never clears a runtime-tuple-unproven block except through a successful apply or disposal'
+          digest: 097309826695d1f06512490cbd88810726fb11681132b5c87f210e20ca1cd48b
+    validation:
+      - argv:
+          - npm
+          - test
+          - --
+          - --run
+          - src/server/sessions/sessionRuntimeRestore.test.ts
+        mutates_git: false
+      - argv:
+          - npm
+          - run
+          - typecheck
+        mutates_git: false
+      - argv:
+          - npx
+          - eslint
+          - src/server/sessions/sessionRuntimeRestore.ts
+          - src/server/sessions/sessionRuntimeRestore.test.ts
+        mutates_git: false
+  - id: T3
+    plan_task: 3
+    title: Session-level transcript reads in PiSessionService
+    lane: service-authority
+    sequence: 1
+    implementer_tier: advanced
+    depends_on: []
+    ownership:
+      - src/server/sessions/piSessionService.ts
+      - src/server/sessions/piSessionService.testSupport.ts
+      - src/server/sessions/piSessionService.modelPolicy.test.ts
+    exclusive_resources: []
+    interfaces:
+      consumes: []
+      produces:
+        - name: session-transcript-entries
+          signature: 'sessionTranscriptEntries(session: PiAgentSession): readonly unknown[] returns session.sessionManager.getEntries?.() ?? session.sessionManager.getBranch()'
+          digest: 5746f9e6f411bdff834af31b3da4f4a65fd71c3ec8798b310cffda2aa78a16d8
+        - name: confirmed-policy-snapshot
+          signature: 'confirmedPolicySnapshot(ref: PiSessionLookup): Promise<ConfirmedPolicySnapshot> reads one append-order entry list from the durable root manager for both creation provenance and model policy'
+          digest: a9bffa162d660dd569a5eeefe4b13d9b5cb1612b49218384f7366ffb53736c6b
+        - name: fake-session-manager-entries-alias
+          signature: 'fakeSessionManager(cwd?: string, patch?: FakeSessionManagerPatch): PiSessionManager delegates getEntries to the effective getBranch unless the patch supplies its own getEntries'
+          digest: c7f30d12bc5ba8f41e5b46a5fdd946d6391109a9401460c820ef641a79a403f5
+    validation:
+      - argv:
+          - npm
+          - test
+          - --
+          - --run
+          - src/server/sessions/piSessionService.modelPolicy.test.ts
+        mutates_git: false
+      - argv:
+          - npm
+          - test
+          - --
+          - --run
+          - src/server/sessions/piSessionService.extensionEntries.test.ts
+          - src/server/sessions/piSessionService.spawnSubsession.test.ts
+          - src/server/sessions/piSessionService.lifecycle.test.ts
+        mutates_git: false
+      - argv:
+          - npm
+          - run
+          - typecheck
+        mutates_git: false
+      - argv:
+          - npx
+          - eslint
+          - src/server/sessions/piSessionService.ts
+          - src/server/sessions/piSessionService.testSupport.ts
+          - src/server/sessions/piSessionService.modelPolicy.test.ts
+        mutates_git: false
+  - id: T4
+    plan_task: 4
+    title: Runtime factory restore hook
+    lane: service-authority
+    sequence: 2
+    implementer_tier: advanced
+    depends_on:
+      - T3
+    ownership:
+      - src/server/sessions/piSessionService.ts
+      - src/server/sessions/sessionRuntimeRestore.factory.test.ts
+      - src/server/sessions/piSessionService.rateLimits.test.ts
+      - src/server/sessions/piSessionService.promptQueue.test.ts
+    exclusive_resources: []
+    interfaces:
+      consumes: []
+      produces:
+        - name: session-runtime-restore-hook
+          signature: 'SessionRuntimeRestore { prepare(input: { sessionId: string; sessionManager: PiSessionManager; modelRuntime: ModelRuntime; explicitModel?: AgentModel; explicitThinkingLevel?: ClientThinkingLevel }): Promise<{ model?: AgentModel; thinkingLevel?: ClientThinkingLevel }> } awaited after sdk.createServices and before sdk.createFromServices with merge initialModel ?? derived?.model and initialThinkingLevel ?? derived?.thinkingLevel'
+          digest: 3b792605d0cfec0bcb5c460bf913442e205f26aaf68b63b54fed2a9656c829e0
+    validation:
+      - argv:
+          - npm
+          - test
+          - --
+          - --run
+          - src/server/sessions/sessionRuntimeRestore.factory.test.ts
+        mutates_git: false
+      - argv:
+          - npm
+          - test
+          - --
+          - --run
+          - src/server/sessions/piSessionService.rateLimits.test.ts
+          - src/server/sessions/piSessionService.promptQueue.test.ts
+        mutates_git: false
+      - argv:
+          - npm
+          - run
+          - typecheck
+        mutates_git: false
+      - argv:
+          - npx
+          - eslint
+          - src/server/sessions/piSessionService.ts
+          - src/server/sessions/sessionRuntimeRestore.factory.test.ts
+          - src/server/sessions/piSessionService.rateLimits.test.ts
+          - src/server/sessions/piSessionService.promptQueue.test.ts
+        mutates_git: false
+  - id: T5
+    plan_task: 5
+    title: Service restore preparation, typed block state, and core integration tests
+    lane: service-authority
+    sequence: 3
+    implementer_tier: capable
+    depends_on:
+      - T1
+      - T2
+      - T4
+    ownership:
+      - src/server/sessions/piSessionService.ts
+      - src/server/sessions/sessionRuntimeRestore.integration.test.ts
+    exclusive_resources: []
+    interfaces:
+      consumes:
+        - interface: read-persisted-session-model-policy
+          from: T1
+          digest: a064e96b208d38852c8b1d91bf0f457604ab7a51b0fb2fed72313c88960bda47
+        - interface: session-runtime-block-cause
+          from: T2
+          digest: ef5e984e3458afadb9c1a5bf1f8b0c0c0a2e5cba262fe15ddd680c2efbd468ad
+        - interface: inspect-session-runtime-selection
+          from: T2
+          digest: 188f17311fa4b22380b8c6a03d309454a954bfc8dddebec5df36297e7b2e44a8
+        - interface: plan-session-runtime-restore
+          from: T2
+          digest: 097309826695d1f06512490cbd88810726fb11681132b5c87f210e20ca1cd48b
+        - interface: session-runtime-restore-hook
+          from: T4
+          digest: 3b792605d0cfec0bcb5c460bf913442e205f26aaf68b63b54fed2a9656c829e0
+      produces:
+        - name: session-runtime-restore-preparation
+          signature: 'prepareSessionRuntimeRestore(input: { sessionId: string; sessionManager: PiSessionManager; modelRuntime: ModelRuntime; explicitModel?: AgentModel; explicitThinkingLevel?: ClientThinkingLevel }): Promise<{ model?: AgentModel; thinkingLevel?: ClientThinkingLevel }> reads the append-order transcript, arms typed blocks, resolves the bound model with a non-network refresh, and clears only the apply verdict selection-unavailable block'
+          digest: c475f9861ecb1602ea3eefe6e24cb01d5f6eb122b2443bdf43232442540a7921
+        - name: model-policy-runtime-block
+          signature: 'modelPolicyRuntimeBlocks: Map<string, ModelPolicyRuntimeBlock> where ModelPolicyRuntimeBlock = { cause: SessionRuntimeBlockCause; reason: string }'
+          digest: 8c0f04520f0d3d23c29bcda2dc21d8ddc1701f72aae53fc5c662f26f70dfb591
+        - name: model-policy-blocked-reason
+          signature: 'modelPolicyBlockedReason(session: PiAgentSession): string | undefined returns MODEL_POLICY_BLOCKED: <reason> for a typed runtime block, else the entry reason, and an unproven restoration outranks an entry defect'
+          digest: 0a9ce9579aa4706dcbecafab13cac739f809c4e5f2da05bbf1ede398d318902d
+        - name: session-runtime-restore-integration-fixtures
+          signature: 'createIntegrationHarness, startPlusSession, openSdkManager, appendSelection, OLD_SELECTION, and NEW_SELECTION fixtures for sessionRuntimeRestore.integration.test.ts'
+          digest: 714a555423a0926e65a634cb4708422e89e62257177377aaf879c3277f8a5531
+    validation:
+      - argv:
+          - npm
+          - test
+          - --
+          - --run
+          - src/server/sessions/sessionRuntimeRestore.integration.test.ts
+        mutates_git: false
+      - argv:
+          - npm
+          - test
+          - --
+          - --run
+          - src/server/sessions/piSessionService.modelPolicy.test.ts
+          - src/server/sessions/sessionRuntimeRestore.test.ts
+          - src/server/sessions/sessionRuntimeRestore.factory.test.ts
+        mutates_git: false
+      - argv:
+          - npm
+          - run
+          - typecheck
+        mutates_git: false
+      - argv:
+          - npx
+          - eslint
+          - src/server/sessions/piSessionService.ts
+          - src/server/sessions/sessionRuntimeRestore.integration.test.ts
+        mutates_git: false
+  - id: T6
+    plan_task: 6
+    title: Automatic-turn gating for subsession notifications
+    lane: service-authority
+    sequence: 4
+    implementer_tier: advanced
+    depends_on:
+      - T5
+    ownership:
+      - src/server/sessions/piSessionService.ts
+      - src/server/sessions/piSessionService.spawnSubsession.test.ts
+    exclusive_resources: []
+    interfaces:
+      consumes:
+        - interface: model-policy-blocked-reason
+          from: T5
+          digest: 0a9ce9579aa4706dcbecafab13cac739f809c4e5f2da05bbf1ede398d318902d
+      produces:
+        - name: subsession-notification-turn-gate
+          signature: 'deliverSubsessionNotification(session: PiAgentSession, notification: DeferredSubsessionNotification): Promise<void> computes const blocked = this.modelPolicyBlockedReason(session) !== undefined || this.isModelPolicyMutationActive(session) immediately before the send and passes { triggerTurn: !blocked, deliverAs: "followUp" } while still delivering and displaying the notification'
+          digest: ae594cafe4d484cb3cb466fa8239086c5a2ecc0ac33cb3230ce1c899530d7e2a
+    validation:
+      - argv:
+          - npm
+          - test
+          - --
+          - --run
+          - src/server/sessions/piSessionService.spawnSubsession.test.ts
+        mutates_git: false
+      - argv:
+          - npm
+          - run
+          - typecheck
+        mutates_git: false
+      - argv:
+          - npx
+          - eslint
+          - src/server/sessions/piSessionService.ts
+          - src/server/sessions/piSessionService.spawnSubsession.test.ts
+        mutates_git: false
+  - id: T7
+    plan_task: 7
+    title: Integration coverage for Pi construction and replacement runtimes
+    lane: integration-coverage
+    sequence: 1
+    implementer_tier: advanced
+    depends_on:
+      - T1
+      - T2
+      - T3
+      - T4
+      - T5
+      - T6
+    ownership:
+      - src/server/sessions/sessionRuntimeRestore.integration.test.ts
+    exclusive_resources: []
+    interfaces:
+      consumes:
+        - interface: read-persisted-session-model-policy
+          from: T1
+          digest: a064e96b208d38852c8b1d91bf0f457604ab7a51b0fb2fed72313c88960bda47
+        - interface: plan-session-runtime-restore
+          from: T2
+          digest: 097309826695d1f06512490cbd88810726fb11681132b5c87f210e20ca1cd48b
+        - interface: session-transcript-entries
+          from: T3
+          digest: 5746f9e6f411bdff834af31b3da4f4a65fd71c3ec8798b310cffda2aa78a16d8
+        - interface: session-runtime-restore-hook
+          from: T4
+          digest: 3b792605d0cfec0bcb5c460bf913442e205f26aaf68b63b54fed2a9656c829e0
+        - interface: session-runtime-restore-preparation
+          from: T5
+          digest: c475f9861ecb1602ea3eefe6e24cb01d5f6eb122b2443bdf43232442540a7921
+        - interface: model-policy-blocked-reason
+          from: T5
+          digest: 0a9ce9579aa4706dcbecafab13cac739f809c4e5f2da05bbf1ede398d318902d
+        - interface: session-runtime-restore-integration-fixtures
+          from: T5
+          digest: 714a555423a0926e65a634cb4708422e89e62257177377aaf879c3277f8a5531
+      produces:
+        - name: session-runtime-restore-integration-coverage
+          signature: 'IntegrationHarnessOptions = { captureRuntimes?: boolean } plus passThroughRuntimeCreator(runtimes) and six tests pinning Pi message-less initial appends, its missing-thinking-entry append, virtual _recordSelection non-arming, navigation purity, fork block arming, and clone block arming'
+          digest: 5135e685f42bcea8976efd81d2918f890f53a0beae3fb3b8d300af9c83f527c8
+    validation:
+      - argv:
+          - npm
+          - test
+          - --
+          - --run
+          - src/server/sessions/sessionRuntimeRestore.integration.test.ts
+        mutates_git: false
+      - argv:
+          - npm
+          - run
+          - typecheck
+        mutates_git: false
+      - argv:
+          - npx
+          - eslint
+          - src/server/sessions/sessionRuntimeRestore.integration.test.ts
+        mutates_git: false
+  - id: T8
+    plan_task: 8
+    title: Document session-level model authority
+    lane: docs-release
+    sequence: 1
+    implementer_tier: standard
+    depends_on:
+      - T1
+      - T2
+      - T3
+      - T4
+      - T5
+      - T6
+      - T7
+    ownership:
+      - docs/config.md
+      - docs/config.html
+      - CONTEXT.md
+      - src/shared/apiTypes.ts
+      - docs/superpowers/specs/2026-07-31-tiered-session-model-policy-and-deterministic-sdd-design.md
+    exclusive_resources: []
+    interfaces:
+      consumes:
+        - interface: read-persisted-session-model-policy
+          from: T1
+          digest: a064e96b208d38852c8b1d91bf0f457604ab7a51b0fb2fed72313c88960bda47
+        - interface: plan-session-runtime-restore
+          from: T2
+          digest: 097309826695d1f06512490cbd88810726fb11681132b5c87f210e20ca1cd48b
+        - interface: session-transcript-entries
+          from: T3
+          digest: 5746f9e6f411bdff834af31b3da4f4a65fd71c3ec8798b310cffda2aa78a16d8
+        - interface: session-runtime-restore-hook
+          from: T4
+          digest: 3b792605d0cfec0bcb5c460bf913442e205f26aaf68b63b54fed2a9656c829e0
+        - interface: model-policy-blocked-reason
+          from: T5
+          digest: 0a9ce9579aa4706dcbecafab13cac739f809c4e5f2da05bbf1ede398d318902d
+        - interface: subsession-notification-turn-gate
+          from: T6
+          digest: ae594cafe4d484cb3cb466fa8239086c5a2ecc0ac33cb3230ce1c899530d7e2a
+        - interface: session-runtime-restore-integration-coverage
+          from: T7
+          digest: 5135e685f42bcea8976efd81d2918f890f53a0beae3fb3b8d300af9c83f527c8
+      produces:
+        - name: session-model-authority-docs
+          signature: 'synchronized docs/config.md and docs/config.html Session-level model selection claims plus the two Validation and recovery wording fixes, CONTEXT.md Session model policy and Session runtime selection glossary entries, the ClientSessionModelPolicyStatus.resolved doc comment, and the 2026-07-31 design supersession note with four inline markers'
+          digest: 457c1fd949017cda278b6fd662ff93c97abc269c4bf5a239fd7a2b2afb77caa5
+    validation:
+      - argv:
+          - npm
+          - run
+          - typecheck
+        mutates_git: false
+      - argv:
+          - npx
+          - eslint
+          - src/shared/apiTypes.ts
+        mutates_git: false
+      - argv:
+          - npm
+          - run
+          - verify:fast
+        mutates_git: false
+  - id: T9
+    plan_task: 9
+    title: Add the patch Changeset
+    lane: docs-release
+    sequence: 2
+    implementer_tier: fast
+    depends_on:
+      - T8
+    ownership:
+      - .changeset/session-level-model-authority.md
+    exclusive_resources: []
+    interfaces:
+      consumes:
+        - interface: session-model-authority-docs
+          from: T8
+          digest: 457c1fd949017cda278b6fd662ff93c97abc269c4bf5a239fd7a2b2afb77caa5
+      produces:
+        - name: session-level-model-authority-changeset
+          signature: 'one patch Changeset at .changeset/session-level-model-authority.md for "@hyperdreamer/pi-webui" naming the session-level model authority fix, the visible MODEL_POLICY_BLOCKED behavior, and the manual pi-webui-sessiond.service restart'
+          digest: d538fd4461025bcba516e0df28babf10936057238853ca585cc4e06365414ec0
+    validation:
+      - argv:
+          - npx
+          - changeset
+          - status
+        mutates_git: false

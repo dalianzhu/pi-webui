@@ -1,0 +1,55 @@
+digraph session_level_model_authority {
+    rankdir=TB;
+    graph [label="session-level-model-authority (epoch 1)", labelloc=t];
+    node [shape=box, style=rounded];
+
+    subgraph cluster_pure_domain {
+        label="lane: pure-domain";
+
+        T1 [label="T1: Fallback-free persisted policy read\ntier: Fast\nplan task 1"];
+        T2 [label="T2: Pure session runtime restore reader and planner\ntier: Standard\nplan task 2"];
+    }
+
+    subgraph cluster_service_authority {
+        label="lane: service-authority";
+
+        T3 [label="T3: Session-level transcript reads in PiSessionService\ntier: Advanced\nplan task 3"];
+        T4 [label="T4: Runtime factory restore hook\ntier: Advanced\nplan task 4"];
+        T5 [label="T5: Service restore preparation, typed block state, and core integration tests\ntier: Capable\nplan task 5"];
+        T6 [label="T6: Automatic-turn gating for subsession notifications\ntier: Advanced\nplan task 6"];
+    }
+
+    subgraph cluster_integration_coverage {
+        label="lane: integration-coverage";
+
+        T7 [label="T7: Integration coverage for Pi construction and replacement runtimes\ntier: Advanced\nplan task 7"];
+    }
+
+    subgraph cluster_docs_release {
+        label="lane: docs-release";
+
+        T8 [label="T8: Document session-level model authority\ntier: Standard\nplan task 8"];
+        T9 [label="T9: Add the patch Changeset\ntier: Fast\nplan task 9"];
+    }
+
+    T1 -> T2 [label="depends_on"];
+    T1 -> T5 [label="depends_on"];
+    T1 -> T7 [label="depends_on"];
+    T1 -> T8 [label="depends_on"];
+    T2 -> T5 [label="depends_on"];
+    T2 -> T7 [label="depends_on"];
+    T2 -> T8 [label="depends_on"];
+    T3 -> T4 [label="depends_on"];
+    T3 -> T7 [label="depends_on"];
+    T3 -> T8 [label="depends_on"];
+    T4 -> T5 [label="depends_on"];
+    T4 -> T7 [label="depends_on"];
+    T4 -> T8 [label="depends_on"];
+    T5 -> T6 [label="depends_on"];
+    T5 -> T7 [label="depends_on"];
+    T5 -> T8 [label="depends_on"];
+    T6 -> T7 [label="depends_on"];
+    T6 -> T8 [label="depends_on"];
+    T7 -> T8 [label="depends_on"];
+    T8 -> T9 [label="depends_on"];
+}
