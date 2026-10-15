@@ -173,6 +173,63 @@ describe("Files request ordering and collapse", () => {
     expect(Object.keys(h.state.expandedDirs).sort()).toEqual(["docs", "src"]);
   });
 
+  it("keeps an unrelated pending directory expansion when another directory collapses", async () => {
+    const pendingTree = deferred<FileTreeResponse>();
+    const h = harness();
+    await h.controller.expandDir("src");
+    vi.mocked(h.api.workspaceTree).mockReturnValueOnce(pendingTree.promise);
+    const pending = h.controller.expandDir("src-docs");
+    await h.controller.expandDir("src");
+    pendingTree.resolve(tree("src-docs"));
+    await pending;
+    expect(h.state.expandedDirs).toEqual({ "src-docs": [] });
+  });
+
+  it("reports an unrelated pending directory error after another directory collapses", async () => {
+    const pendingTree = deferred<FileTreeResponse>();
+    const h = harness();
+    await h.controller.expandDir("src");
+    vi.mocked(h.api.workspaceTree).mockReturnValueOnce(pendingTree.promise);
+    const pending = h.controller.expandDir("docs");
+    await h.controller.expandDir("src");
+    pendingTree.reject(new Error("Unable to read docs"));
+    await pending;
+    expect(h.state.expandedDirs).toEqual({});
+    expect(h.state.error).toContain("Unable to read docs");
+  });
+
+  it("ignores a pending descendant expansion after its parent collapses and reopens", async () => {
+    const pendingTree = deferred<FileTreeResponse>();
+    const h = harness();
+    await h.controller.expandDir("src");
+    vi.mocked(h.api.workspaceTree).mockReturnValueOnce(pendingTree.promise);
+    const pending = h.controller.expandDir("src/deep");
+    await h.controller.expandDir("src");
+    await h.controller.expandDir("src");
+    pendingTree.resolve(tree("src/deep"));
+    await pending;
+    expect(h.state.expandedDirs).toEqual({ src: [] });
+  });
+
+  it("does not revive an old descendant request when its expansion is retried", async () => {
+    const oldTree = deferred<FileTreeResponse>();
+    const newTree = deferred<FileTreeResponse>();
+    const h = harness();
+    await h.controller.expandDir("src");
+    vi.mocked(h.api.workspaceTree).mockReturnValueOnce(oldTree.promise);
+    const oldExpansion = h.controller.expandDir("src/deep");
+    await h.controller.expandDir("src");
+    await h.controller.expandDir("src");
+    vi.mocked(h.api.workspaceTree).mockReturnValueOnce(newTree.promise);
+    const newExpansion = h.controller.expandDir("src/deep");
+    oldTree.resolve(tree("src/deep"));
+    await oldExpansion;
+    expect(h.state.expandedDirs).toEqual({ src: [] });
+    newTree.resolve(tree("src/deep"));
+    await newExpansion;
+    expect(h.state.expandedDirs).toEqual({ src: [], "src/deep": [] });
+  });
+
   it("reserves route intent before root loading so old same-workspace files cannot publish", async () => {
     const old = deferred<FileContentResponse>();
     const root = deferred<FileTreeResponse>();

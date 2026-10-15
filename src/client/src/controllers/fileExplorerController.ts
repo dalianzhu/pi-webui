@@ -150,8 +150,12 @@ export class FileExplorerController {
     this.treeGeneration += 1;
     const collapse = this.collapseGeneration;
     if (this.getState().expandedDirs[path] !== undefined) {
-      this.collapseGeneration += 1;
-      this.setState({ expandedDirs: Object.fromEntries(Object.entries(this.getState().expandedDirs).filter(([key]) => key !== path && !key.startsWith(`${path}/`))) });
+      const descendantPrefix = `${path}/`;
+      // Cancel pending descendants while leaving unrelated expansions active.
+      for (const [directory, pendingRequest] of this.directoryRequests) {
+        if (directory.startsWith(descendantPrefix)) this.directoryRequests.set(directory, pendingRequest + 1);
+      }
+      this.setState({ expandedDirs: Object.fromEntries(Object.entries(this.getState().expandedDirs).filter(([key]) => key !== path && !key.startsWith(descendantPrefix))) });
       return;
     }
     try {
