@@ -53,6 +53,7 @@ export class WorkspaceFilesPanel extends LitElement {
           <div class="toolbar-actions">
             <button @click=${this.openFilePicker}>Upload</button>
             <button @click=${context.onRefreshFiles}>Refresh</button>
+            <button ?disabled=${Object.keys(context.expandedDirs).length === 0} @click=${context.onCollapseAll}>Collapse all</button>
           </div>
           <input id="workspace-upload-input" class="visually-hidden" type="file" multiple @change=${this.handleFileInputChange} />
         </section>
@@ -105,7 +106,13 @@ export class WorkspaceFilesPanel extends LitElement {
     loadCodeViewer();
     return html`
       <div class="viewer-header"><strong>${file.path}</strong><small>${file.language ?? "text"}${file.truncated ? " · truncated" : ""}</small></div>
-      <code-viewer .content=${file.content} .language=${file.language}></code-viewer>
+      <code-viewer
+        .content=${file.content}
+        .language=${file.language}
+        .positionKey=${JSON.stringify([context.machine.id, context.workspace.projectId, context.workspace.id, file.path])}
+        .initialTopLine=${context.selectedFileTopLine ?? 1}
+        .onTopLineChange=${(line: number) => { context.onFileTopLineChange?.(file.path, line); }}
+      ></code-viewer>
     `;
   }
 

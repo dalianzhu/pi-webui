@@ -57,11 +57,13 @@ interface ReconcileProjectCatalogOptions {
 export interface WorkspaceControllerDependencies {
   api?: Pick<typeof defaultApi, "sessions" | "workspaces">;
   onBackgroundError?: (operation: string, error: unknown) => void;
+  onForgetProject?: (machineId: string, projectId: string) => void;
 }
 
 export class WorkspaceController {
   private readonly api: Pick<typeof defaultApi, "sessions" | "workspaces">;
   private readonly onBackgroundError: WorkspaceControllerDependencies["onBackgroundError"];
+  private readonly onForgetProject: WorkspaceControllerDependencies["onForgetProject"];
   private readonly unhydratedWorkspaceKeys = new Set<string>();
   private readonly latestTopologyRequestOrderByScope = new Map<string, number>();
   /**
@@ -87,6 +89,7 @@ export class WorkspaceController {
   ) {
     this.api = deps.api ?? defaultApi;
     this.onBackgroundError = deps.onBackgroundError;
+    this.onForgetProject = deps.onForgetProject;
   }
 
   clearSelection(options?: { updateUrl?: boolean | undefined; preserveError?: boolean | undefined }) {
@@ -107,6 +110,7 @@ export class WorkspaceController {
   }
 
   forgetProject(projectId: string): void {
+    this.onForgetProject?.(selectedMachineId(this.getState()), projectId);
     this.workspaceSelection.forgetProject(machineProjectKey(selectedMachineId(this.getState()), projectId));
     const workspacesByProjectId = Object.fromEntries(Object.entries(this.getState().workspacesByProjectId).filter(([candidate]) => candidate !== projectId));
     this.setState({ workspacesByProjectId });

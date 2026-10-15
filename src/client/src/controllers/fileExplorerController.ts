@@ -17,6 +17,7 @@ import {
   type WorkspaceUploadBatchState,
 } from "../workspaceUploadState";
 import { selectedMachineId, type GetState, type SetState, type UpdateUrl } from "./types";
+import { FileNavigationMemory, fileWorkspaceKey } from "./fileNavigationMemory";
 
 const FILES_ROUTE_NAMESPACE = queryNamespace("core:workspace.files");
 
@@ -28,6 +29,7 @@ export interface FileExplorerControllerDependencies {
   uploadWorkspaceFiles?: UploadWorkspaceFiles;
   createUploadBatchId?: () => string;
   now?: () => string;
+  memory?: FileNavigationMemory;
 }
 
 export interface StartWorkspaceUploadOptions {
@@ -49,6 +51,13 @@ export class FileExplorerController {
   private readonly now: () => string;
   private readonly uploadTasks = new Map<string, WorkspaceUploadTask<WriteWorkspaceFileResponse[]>>();
   private uploadBatchSequence = 0;
+  private readonly memory: FileNavigationMemory;
+  private workspaceGeneration = 0;
+  private fileRequest = 0;
+  private refreshRequest = 0;
+  private treeGeneration = 0;
+  private collapseGeneration = 0;
+  private readonly directoryRequests = new Map<string, number>();
 
   constructor(
     private readonly getState: GetState,
@@ -57,6 +66,7 @@ export class FileExplorerController {
     deps: FileExplorerControllerDependencies = {},
   ) {
     this.api = deps.api ?? defaultApi;
+    this.memory = deps.memory ?? new FileNavigationMemory();
     this.uploadWorkspaceFiles = deps.uploadWorkspaceFiles ?? defaultUploadWorkspaceFiles;
     this.createUploadBatchId = deps.createUploadBatchId ?? (() => {
       this.uploadBatchSequence += 1;
@@ -65,35 +75,107 @@ export class FileExplorerController {
     this.now = deps.now ?? (() => new Date().toISOString());
   }
 
+  /** Called for every workspace scope transition, including A → B → A. */
+  workspaceChanged(): void {
+    this.workspaceGeneration += 1;
+    this.fileRequest += 1;
+    this.treeGeneration += 1;
+    this.collapseGeneration += 1;
+    this.directoryRequests.clear();
+  }
+
+  forgetScope(machineId: string, projectId?: string): void {
+    this.memory.forgetScope(machineId, projectId);
+  }
+
+  topLine(path: string | undefined): number | undefined {
+    const key = fileWorkspaceKey(this.getState());
+    const position = key === undefined ? undefined : this.memory.latest(key);
+    return position?.path === path ? position?.topLine : undefined;
+  }
+
+  rememberTopLine(key: string, path: string, line: number): void {
+    this.memory.rememberLine(key, path, line);
+  }
+
+  async restoreRememberedFile(path?: string): Promise<void> {
+    const scope = this.captureScope();
+    if (scope === undefined) return;
+    const file = path ?? this.memory.latest(scope.key)?.path;
+    const request = ++this.fileRequest;
+    const revealGeneration = this.treeGeneration;
+    await this.refreshFiles();
+    if (!scope.current() || request !== this.fileRequest || file === undefined) return;
+    await this.restoreFile(file, revealGeneration);
+    if (!scope.current() || this.getState().selectedFilePath !== file) return;
+    setNamespacedQueryKey(FILES_ROUTE_NAMESPACE, "file", this.getState().selectedFilePath);
+    this.updateUrl({ replace: true });
+  }
+
+  collapseAll(): void {
+    this.treeGeneration += 1;
+    this.collapseGeneration += 1;
+    this.setState({ expandedDirs: {} });
+  }
+
   async refreshFiles(): Promise<void> {
-    const project = this.getState().selectedProject;
-    const workspace = this.getState().selectedWorkspace;
-    if (project === undefined || workspace === undefined) return;
+    const scope = this.captureScope();
+    if (scope === undefined) return;
+    const request = ++this.refreshRequest;
+    const tree = this.treeGeneration;
+    let expanded = { ...this.getState().expandedDirs };
     try {
-      const machineId = selectedMachineId(this.getState());
-      const root = await this.api.workspaceTree(project.id, workspace.id, "", machineId);
-      const expanded = { ...this.getState().expandedDirs };
-      await Promise.all(Object.keys(expanded).map(async (path) => { expanded[path] = (await this.api.workspaceTree(project.id, workspace.id, path, machineId)).entries; }));
-      this.setState({ fileTree: root.entries, expandedDirs: expanded, fileTreeStale: false, error: "" });
+      const root = await this.api.workspaceTree(scope.projectId, scope.workspaceId, "", scope.machineId);
+      await Promise.all(Object.keys(expanded).map(async (path) => {
+        try {
+          expanded[path] = (await this.api.workspaceTree(scope.projectId, scope.workspaceId, path, scope.machineId)).entries;
+        } catch (error) {
+          if (!isUnavailableFileError(error)) throw error;
+          expanded = omitKey(expanded, path);
+        }
+      }));
+      if (!scope.current() || request !== this.refreshRequest) return;
+      // A refresh must not undo an intervening user collapse/expand action.
+      this.setState({ fileTree: root.entries, ...(tree === this.treeGeneration ? { expandedDirs: expanded } : {}), fileTreeStale: false, error: "" });
     } catch (error) {
-      this.setState({ error: String(error) });
+      if (scope.current() && request === this.refreshRequest) this.setState({ error: String(error) });
     }
   }
 
   async expandDir(path: string): Promise<void> {
-    const project = this.getState().selectedProject;
-    const workspace = this.getState().selectedWorkspace;
-    if (project === undefined || workspace === undefined) return;
+    const scope = this.captureScope();
+    if (scope === undefined) return;
+    const request = (this.directoryRequests.get(path) ?? 0) + 1;
+    this.directoryRequests.set(path, request);
+    this.treeGeneration += 1;
+    const collapse = this.collapseGeneration;
     if (this.getState().expandedDirs[path] !== undefined) {
-      this.setState({ expandedDirs: omitKey(this.getState().expandedDirs, path) });
+      this.collapseGeneration += 1;
+      this.setState({ expandedDirs: Object.fromEntries(Object.entries(this.getState().expandedDirs).filter(([key]) => key !== path && !key.startsWith(`${path}/`))) });
       return;
     }
     try {
-      const response = await this.api.workspaceTree(project.id, workspace.id, path, selectedMachineId(this.getState()));
+      const response = await this.api.workspaceTree(scope.projectId, scope.workspaceId, path, scope.machineId);
+      if (!scope.current() || collapse !== this.collapseGeneration || request !== this.directoryRequests.get(path)) return;
+      this.treeGeneration += 1;
       this.setState({ expandedDirs: { ...this.getState().expandedDirs, [path]: response.entries }, error: "" });
     } catch (error) {
-      this.setState({ error: String(error) });
+      if (scope.current() && collapse === this.collapseGeneration && request === this.directoryRequests.get(path)) this.setState({ error: String(error) });
     }
+  }
+
+  private captureScope() {
+    const state = this.getState();
+    const key = fileWorkspaceKey(state);
+    if (key === undefined || state.selectedProject === undefined || state.selectedWorkspace === undefined) return undefined;
+    const generation = this.workspaceGeneration;
+    return {
+      key,
+      projectId: state.selectedProject.id,
+      workspaceId: state.selectedWorkspace.id,
+      machineId: selectedMachineId(state),
+      current: () => generation === this.workspaceGeneration && key === fileWorkspaceKey(this.getState()),
+    };
   }
 
   async selectFile(path: string): Promise<void> {
@@ -103,23 +185,52 @@ export class FileExplorerController {
     await this.restoreFile(path);
   }
 
-  async restoreFile(path: string): Promise<void> {
-    const project = this.getState().selectedProject;
-    const workspace = this.getState().selectedWorkspace;
-    if (project === undefined || workspace === undefined) return;
-    this.setState({ selectedFilePath: path, selectedFileContent: undefined });
+  async restoreFile(path: string, revealGeneration = this.treeGeneration): Promise<void> {
+    const scope = this.captureScope();
+    if (scope === undefined) return;
+    const request = ++this.fileRequest;
+    const tree = revealGeneration;
+    const current = () => scope.current() && request === this.fileRequest;
+    const remembered = this.memory.latest(scope.key);
+    const topLine = remembered?.path === path ? remembered.topLine ?? 1 : 1;
+    this.setState({ selectedFilePath: path, selectedFileContent: undefined, selectedFileTopLine: topLine });
     try {
-      const content = await this.api.workspaceFile(project.id, workspace.id, path, selectedMachineId(this.getState()));
-      if (this.getState().selectedFilePath === path) this.setState({ selectedFileContent: content, error: "" });
+      const content = await this.api.workspaceFile(scope.projectId, scope.workspaceId, path, scope.machineId);
+      if (!current()) return;
+      // The outgoing viewer can report its final line while this GET is in
+      // flight. Commit the latest same-file position, not the request snapshot.
+      const latest = this.memory.latest(scope.key);
+      const committedLine = latest?.path === path ? latest.topLine ?? 1 : 1;
+      this.memory.remember(scope.key, path, content.mediaType === "image" || content.binary ? undefined : committedLine);
+      this.setState({ selectedFileContent: content, selectedFileTopLine: committedLine, error: "" });
     } catch (error) {
-      if (this.getState().selectedFilePath !== path) return;
+      if (!current()) return;
       if (isUnavailableFileError(error)) {
-        this.setState({ selectedFilePath: undefined, selectedFileContent: undefined, error: "" });
+        if (this.memory.latest(scope.key)?.path === path) this.memory.forget(scope.key);
+        this.setState({ selectedFilePath: undefined, selectedFileContent: undefined, selectedFileTopLine: undefined, error: "" });
         setNamespacedQueryKey(FILES_ROUTE_NAMESPACE, "file", undefined, { replace: true });
         this.updateUrl({ replace: true });
         return;
       }
       this.setState({ error: String(error) });
+      return;
+    }
+    if (!current() || tree !== this.treeGeneration) return;
+    const parents = path.split("/").slice(0, -1).map((_, index, parts) => parts.slice(0, index + 1).join("/"));
+    try {
+      const entries = await Promise.all(parents.map(async (parent) => [parent, (await this.api.workspaceTree(scope.projectId, scope.workspaceId, parent, scope.machineId)).entries] as const));
+      if (current() && tree === this.treeGeneration) {
+        this.treeGeneration += 1;
+        this.setState({ expandedDirs: { ...this.getState().expandedDirs, ...Object.fromEntries(entries) } });
+      }
+    } catch (error) {
+      if (!current() || tree !== this.treeGeneration) return;
+      if (isUnavailableFileError(error)) {
+        this.memory.forget(scope.key);
+        this.setState({ selectedFilePath: undefined, selectedFileContent: undefined, selectedFileTopLine: undefined });
+        setNamespacedQueryKey(FILES_ROUTE_NAMESPACE, "file", undefined, { replace: true });
+        this.updateUrl({ replace: true });
+      } else this.setState({ error: String(error) });
     }
   }
 
