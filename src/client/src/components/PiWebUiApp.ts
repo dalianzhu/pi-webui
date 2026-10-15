@@ -32,6 +32,7 @@ import { HostSpeechController } from "../controllers/hostSpeechController";
 import { resolveAssistantSpeechSource } from "../hostSpeechText";
 import { WorkspaceController, canDeleteWorkspace } from "../controllers/workspaceController";
 import { WorkspaceTasksController, type WorkspaceTasksControllerDependencies, type WorkspaceTasksSelection } from "../controllers/workspaceTasksController";
+import { fileWorkspaceKey } from "../controllers/fileNavigationMemory";
 import { emptyMachineNavigationSnapshot, machineNavigationSnapshotFromState, routeFromMachineNavigationSnapshot, SessionStorageMachineNavigationMemory, type MachineNavigationSnapshot, type WorkspaceRouteSurface } from "../controllers/machineNavigationMemory";
 import { SessionStorageSessionSelectionMemory } from "../controllers/sessionSelection";
 import { SessionStorageTerminalSelectionMemory } from "../controllers/terminalSelection";
@@ -283,6 +284,7 @@ export class PiWebUiApp extends LitElement {
     this.sessions,
     new SessionStorageWorkspaceSelectionMemory(),
     {
+      onForgetProject: (machineId, projectId) => { this.files.forgetScope(machineId, projectId); },
       onBackgroundError: (operation, error) => {
         console.warn(`Failed to ${operation}`, error);
       },
@@ -794,6 +796,7 @@ export class PiWebUiApp extends LitElement {
     const previousPolicyComposerScope = activePolicyComposerScope(previous);
     const previousStarterSelectionScope = starterModelPolicySelectionScope(previous);
     this.state = next;
+    this.synchronizeFileNavigation(previous, next);
     if (previousStarterSelectionScope !== starterModelPolicySelectionScope(this.state)) {
       this.starterModelPolicySelectionGeneration += 1;
     }
@@ -817,6 +820,12 @@ export class PiWebUiApp extends LitElement {
     this.synchronizeProjectCatalogPolling();
     const policyComposerScope = activePolicyComposerScope(this.state);
     if (policyComposerScope !== undefined && policyComposerScope !== previousPolicyComposerScope) this.preloadActiveModelPolicyInputs();
+  }
+
+  private synchronizeFileNavigation(previous: AppState, next: AppState): void {
+    if (fileWorkspaceKey(previous) === fileWorkspaceKey(next)) return;
+    this.files.workspaceChanged();
+    if (!this.routeRestoreInProgress && next.selectedWorkspace !== undefined) void this.files.restoreRememberedFile();
   }
 
   private synchronizeProjectCatalogPolling(): void {
@@ -1226,9 +1235,8 @@ export class PiWebUiApp extends LitElement {
   }
 
   private async refreshRestoredWorkspaceTool(tool: QualifiedContributionId | undefined, selectedFilePath: string | undefined): Promise<void> {
-    if (tool === "core:workspace.files") await this.files.refreshFiles();
-    if (tool === "core:workspace.files" && selectedFilePath !== undefined) await this.files.restoreFile(selectedFilePath);
-    if (tool === "core:workspace.git") await this.git.refreshGit();
+    await this.files.restoreRememberedFile(selectedFilePath);
+    if ((tool ?? this.state.workspaceTool) === "core:workspace.git") await this.git.refreshGit();
   }
 
   private async withChatScrollTransition(action: () => Promise<void>, shouldComplete: () => boolean = () => true) {
@@ -3335,6 +3343,11 @@ export class PiWebUiApp extends LitElement {
         selectedTerminalId: this.state.selectedTerminalId,
         terminalAutoStart: this.terminalAutoStartWorkspaceId === workspace.id,
         workspaceUploadDefaultFolder: workspaceEffectiveUploadFolder(workspace.effectiveConfig, this.workspaceUploadDefaultFolder),
+        selectedFileTopLine: this.files.topLine(this.state.selectedFilePath) ?? this.state.selectedFileTopLine,
+        onFileTopLineChange: (path, line) => {
+          this.files.rememberTopLine(JSON.stringify([machine.id, workspace.projectId, workspace.id]), path, line);
+        },
+        onCollapseAll: () => { this.files.collapseAll(); },
         onRefreshFiles: () => { void this.files.refreshFiles(); },
         onExpandDir: (path: string) => { void this.files.expandDir(path); },
         onSelectFile: (path: string) => { void this.files.selectFile(path); },
@@ -3904,7 +3917,10 @@ export class PiWebUiApp extends LitElement {
     const wasSelected = this.state.selectedMachine?.id === machine.id;
     if (wasSelected) this.rememberCurrentMachineNavigation();
     const fallback = await this.machines.deleteMachine(machine, { selectFallback: !wasSelected });
-    if (!this.state.machines.some((candidate) => candidate.id === machine.id)) this.machineNavigation.forget(machine.id);
+    if (!this.state.machines.some((candidate) => candidate.id === machine.id)) {
+      this.machineNavigation.forget(machine.id);
+      this.files.forgetScope(machine.id);
+    }
     if (wasSelected && fallback !== undefined) await this.selectMachineWithMemory(fallback, { rememberCurrent: false });
   }
 

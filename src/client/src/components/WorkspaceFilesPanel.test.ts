@@ -8,7 +8,7 @@ import type { WorkspaceUploadBatchState } from "../workspaceUploadState";
 // hatch; see ../templateInspection.testSupport for the proportionality
 // rationale. Viewer content messaging is asserted via the public
 // workspaceFileViewerStatusLabel seam instead of scraping Lit markup.
-import { findOptionalTemplateEventHandlerAfterMarker, templateClickHandlerForText, templateEventHandlerAfterMarker } from "../templateInspection.testSupport";
+import { findOptionalTemplateEventHandlerAfterMarker, templateClickHandlerForText, templateEventHandlerAfterMarker, templateEventHandlerNearMarker } from "../templateInspection.testSupport";
 import { WorkspaceFilesPanel, startDirectWorkspaceUpload, uploadBatchProgressValue, uploadBatchStatusLabel, workspaceFileViewerStatusLabel, workspaceUploadBatchesForScope, workspaceUploadReviewDefaults, workspaceUploadReviewError } from "./WorkspaceFilesPanel";
 
 afterEach(() => {
@@ -46,6 +46,18 @@ describe("workspace-files-panel upload review", () => {
 });
 
 describe("workspace-files-panel file tree boundary", () => {
+  it("wires Collapse all to the directory-only controller action", () => {
+    const onCollapseAll = vi.fn();
+    const onSelectFile = vi.fn();
+    const panel = new WorkspaceFilesPanel();
+    panel.context = workspacePanelContext({ expandedDirs: { src: [] }, selectedFilePath: "src/a.ts", onCollapseAll, onSelectFile });
+    // Narrow template wiring check; layout and viewport restoration are tested
+    // at their own boundaries, not through template inspection.
+    templateEventHandlerNearMarker(panel.render(), ">Collapse all</button>")(new Event("click"));
+    expect(onCollapseAll).toHaveBeenCalledOnce();
+    expect(onSelectFile).not.toHaveBeenCalled();
+  });
+
   it("renders expanded tree and selected-file state while wiring row clicks", () => {
     const onExpandDir = vi.fn<WorkspacePanelContext["onExpandDir"]>();
     const onSelectFile = vi.fn<WorkspacePanelContext["onSelectFile"]>();
@@ -255,6 +267,7 @@ function workspacePanelContext(patch: Partial<WorkspacePanelContext> = {}): Work
     selectedFilePath: patch.selectedFilePath,
     selectedFileContent: patch.selectedFileContent,
     fileTreeStale: patch.fileTreeStale ?? false,
+    onCollapseAll: patch.onCollapseAll ?? vi.fn(),
     gitStatus: patch.gitStatus,
     selectedDiffPath: patch.selectedDiffPath,
     selectedDiff: patch.selectedDiff,

@@ -13,27 +13,39 @@ import { go } from "@codemirror/lang-go";
 import { diff } from "@codemirror/legacy-modes/mode/diff";
 import { LitElement, css, html } from "lit";
 import { customElement, property, query } from "lit/decorators.js";
+import { trackReadingPosition } from "./codeReadingPosition";
 
 @customElement("code-viewer")
 export class CodeViewer extends LitElement {
   @property() content = "";
   @property() language: string | undefined;
+  @property() positionKey = "";
+  @property({ type: Number }) initialTopLine = 1;
+  @property({ attribute: false }) onTopLineChange: ((line: number) => void) | undefined;
   @query(".host") private editorHost?: HTMLDivElement;
 
   private view: EditorView | undefined;
-
-  override firstUpdated(): void {
-    this.recreateEditor();
-  }
+  private stopTracking: (() => void) | undefined;
 
   override updated(changed: Map<string, unknown>): void {
-    if (changed.has("content") || changed.has("language")) this.recreateEditor();
+    if (changed.has("content") || changed.has("language") || changed.has("positionKey")) this.recreateEditor();
+  }
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    if (this.hasUpdated && this.view === undefined) this.requestUpdate("positionKey", undefined);
   }
 
   override disconnectedCallback(): void {
+    this.destroyEditor();
+    super.disconnectedCallback();
+  }
+
+  private destroyEditor(): void {
+    this.stopTracking?.();
+    this.stopTracking = undefined;
     this.view?.destroy();
     this.view = undefined;
-    super.disconnectedCallback();
   }
 
   override render() {
@@ -42,7 +54,7 @@ export class CodeViewer extends LitElement {
 
   private recreateEditor(): void {
     if (!this.editorHost) return;
-    this.view?.destroy();
+    this.destroyEditor();
     this.view = new EditorView({
       parent: this.editorHost,
       state: EditorState.create({
@@ -60,6 +72,7 @@ export class CodeViewer extends LitElement {
         ],
       }),
     });
+    this.stopTracking = trackReadingPosition(this.view, this.initialTopLine, this.onTopLineChange);
   }
 
   static override styles = css`

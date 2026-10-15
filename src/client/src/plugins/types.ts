@@ -175,6 +175,8 @@ export interface WorkspacePanelContext extends WorkspaceContext {
   expandedDirs: Record<string, FileTreeEntry[]>;
   selectedFilePath: string | undefined;
   selectedFileContent: FileContentResponse | undefined;
+  selectedFileTopLine?: number | undefined;
+  onFileTopLineChange?: (path: string, line: number) => void;
   fileTreeStale: boolean;
   gitStatus: GitStatusResponse | undefined;
   selectedDiffPath: string | undefined;
@@ -186,6 +188,7 @@ export interface WorkspacePanelContext extends WorkspaceContext {
   terminalAutoStart: boolean;
   workspaceUploadDefaultFolder: string;
   onRefreshFiles: () => void;
+  onCollapseAll?: () => void;
   onExpandDir: (path: string) => void;
   onSelectFile: (path: string) => void;
   onStartWorkspaceUpload: (files: readonly File[], options: { destinationFolder: string; createDirs?: boolean; overwrite?: boolean; selectUploadedFile?: boolean }) => { batchId: string; done: Promise<void> } | undefined;
