@@ -139,8 +139,8 @@ describe("expanded navigation header real DOM", () => {
     expect(description.textContent.trim()).toBe(`Machine status: ${status}.`);
     expect(description.getAttribute("aria-hidden")).not.toBe("true");
     expect(description.hidden).toBe(false);
-    expect(getComputedStyle(description).display).not.toBe("none");
-    expect(getComputedStyle(description).visibility).not.toBe("hidden");
+    // jsdom does not cascade shadow-root <style> rules, so computed-style hiding is not asserted here.
+    // Real visual hiding is covered by the browser acceptance gate.
     const indicator = required(selected, ".machine-status");
     expect(indicator.title).toBe(status);
     expect(indicator.textContent).toBe(status);
@@ -161,6 +161,11 @@ describe("expanded navigation header real DOM", () => {
     panel.machines = machines.slice(1);
     await settle(panel);
     expect(button(panel).getAttribute("aria-label")).toBe("Machine: Remote. Switch machine.");
+  });
+
+  it("falls back to the local machine when it is not the first entry", async () => {
+    const { panel } = await mount({ machines: [remoteMachine, localMachine], selectedMachine: undefined });
+    expect(button(panel).getAttribute("aria-label")).toBe("Machine: Local. Switch machine.");
   });
 
   it.each([
