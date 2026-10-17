@@ -1,5 +1,6 @@
 import {
   createAssistantMessageEventStream,
+  normalizeContext,
   type Api,
   type AssistantMessage,
   type AssistantMessageEvent,
@@ -9,6 +10,7 @@ import {
   type TranscriptContext,
 } from "@earendil-works/pi-ai";
 import type { StreamFn } from "@earendil-works/pi-agent-core";
+import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import {
   isHttpErrorStatus,
   readModelHttpErrorStatus,
@@ -26,6 +28,7 @@ const SUPPORTED_FETCH_APIS = new Set([
 ]);
 
 const wrappedDelegates = new WeakMap<StreamFn, StreamFn>();
+const wrappedRuntimes = new WeakMap<ModelRuntime, ModelRuntime>();
 
 type CaptureObservation =
   | { kind: "unobserved" }
@@ -65,6 +68,62 @@ export function withModelHttpErrorStatus(delegate: StreamFn): StreamFn {
   Object.defineProperty(wrapped, MODEL_HTTP_ERROR_WRAPPED, { value: true, enumerable: false });
   wrappedDelegates.set(delegate, wrapped);
   return wrapped;
+}
+
+/**
+ * Decorates only the runtime's recursive `streamSimple` boundary. Other runtime
+ * methods stay bound to the original instance, while a virtual model's recursive
+ * physical dispatch re-enters this proxy.
+ */
+export function withModelHttpErrorStatusRuntime(modelRuntime: ModelRuntime): ModelRuntime {
+  const existing = wrappedRuntimes.get(modelRuntime);
+  if (existing !== undefined) return existing;
+
+  const decorated = new Proxy(modelRuntime, {
+    get(target, property, receiver) {
+      if (property === "streamSimple") {
+        const original = target.streamSimple.bind(receiver);
+        const streamSimple: ModelRuntime["streamSimple"] = (model, context, options) => {
+          if (!shouldCaptureModel(model)) {
+            return original.call(receiver, model, context, options);
+          }
+
+          const delegate: StreamFn = (routedModel, routedContext, routedOptions) =>
+            original.call(receiver, routedModel, routedContext, routedOptions);
+          const transcript = normalizeContext(context);
+          const wrapped = withModelHttpErrorStatus(delegate);
+          const result = wrapped(model, transcript, options);
+          if (result instanceof Promise) {
+            const output = createAssistantMessageEventStream();
+            void pumpStream(
+              () => result,
+              output,
+              model,
+              transcript,
+              options,
+              undefined,
+            );
+            return output;
+          }
+          return result;
+        };
+        return streamSimple;
+      }
+
+      const value: unknown = Reflect.get(target, property, target);
+      if (typeof value === "function") {
+        return (...args: never[]) => {
+          // Reflect.apply is typed as `any` for a dynamically reflected function.
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+          return Reflect.apply(value, target, args);
+        };
+      }
+      return value;
+    },
+  });
+  wrappedRuntimes.set(modelRuntime, decorated);
+  wrappedRuntimes.set(decorated, decorated);
+  return decorated;
 }
 
 function shouldCaptureModel(model: Model<Api>): boolean {

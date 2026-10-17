@@ -47,7 +47,7 @@ function completedStream(input: number): StreamFn {
   };
 }
 
-function makeFactory(owner: ModelRateLimitOwner, delegate: StreamFn) {
+function makeFactory(owner: ModelRateLimitOwner | undefined, delegate: StreamFn) {
   const streamFunction = vi.fn<StreamFn>((model, context, options) => delegate(model, context, options));
   const fake = fakeRuntime("limited-session", { agent: { streamFunction } });
   const services = fakeAgentSessionServices();
@@ -90,6 +90,15 @@ async function createRuntimeSession(factory: ReturnType<typeof createDefaultRunt
 }
 
 describe("PiSessionService rate limit integration", () => {
+  it("leaves the SDK stream function unchanged when no rate limit owner is supplied", async () => {
+    const session = makeFactory(undefined, completedStream(0));
+    const runtime = await createRuntimeSession(session.factory);
+
+    expect(runtime.session.agent.streamFunction).toBe(session.streamFunction);
+    await expect((await runtime.session.agent.streamFunction(catalogModel(), normalizeContext({ messages: [] }), {})).result()).resolves.toMatchObject({ stopReason: "stop" });
+    expect(session.streamFunction).toHaveBeenCalledOnce();
+  });
+
   it("shares one model budget across independently created sessions and charges once per call", async () => {
     const clock = createFakeModelRateLimitClock();
     const owner = createModelRateLimitOwner({ clock });
