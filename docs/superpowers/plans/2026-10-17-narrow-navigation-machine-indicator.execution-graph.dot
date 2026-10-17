@@ -1,0 +1,9 @@
+digraph execution {
+  rankdir=LR;
+  subgraph cluster_navigation {
+    label="navigation";
+    "T-001" [label="Task 1: Fix narrow header presentation and accessible machine health\nAdvanced"];
+    "T-002" [label="Task 2: Add standalone offline browser acceptance and old-source regression gate\nAdvanced"];
+  }
+  "T-001" -> "T-002";
+}
