@@ -102,6 +102,28 @@ describe("applyTranscriptEvent", () => {
     ]);
   });
 
+  it("keeps live finalization in parity with history normalization for coded errors", () => {
+    const rawMessage = {
+      role: "assistant",
+      content: [{ type: "text", text: "partial answer" }],
+      stopReason: "error",
+      errorMessage: "Rate limit exceeded.",
+      piWebUiHttpStatus: 429,
+      timestamp: "2026-05-09T12:00:00.000Z",
+      provider: "openai",
+      model: "example-model",
+    };
+    const live = applyTranscriptEvent([
+      textMessage("user", "question"),
+      textMessage("assistant", "partial"),
+    ], { type: "message.end", message: rawMessage });
+
+    expect(live).toEqual([
+      textMessage("user", "question"),
+      ...normalizeMessages([rawMessage]),
+    ]);
+  });
+
   it("replaces streamed thinking and skill reads when the finalized assistant message includes thinking", () => {
     const streamed: ChatLine[] = [
       { role: "assistant", parts: [{ type: "thinking", text: "load skill" }] },

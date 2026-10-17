@@ -1,4 +1,11 @@
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { AssistantMessageEventStream } from "@earendil-works/pi-ai/utils/event-stream";
+import {
+  buildSessionContext,
+  SessionManager,
+} from "@earendil-works/pi-coding-agent";
 import {
   createAssistantMessageEventStream,
   normalizeContext,
@@ -10,7 +17,9 @@ import {
 } from "@earendil-works/pi-ai";
 import type { StreamFn } from "@earendil-works/pi-agent-core";
 import { describe, expect, it, vi } from "vitest";
-import { readModelHttpErrorStatus } from "../../shared/modelHttpError";
+import { normalizeMessages } from "../../client/src/chatMessages";
+import { readModelHttpErrorStatus, type ModelHttpErrorMetadata } from "../../shared/modelHttpError";
+import { projectBrowserMessageResponse, projectBrowserSessionEvent } from "../browserMessageProjection";
 import { withModelHttpErrorStatus } from "./modelHttpErrorStream";
 
 const CONTEXT = normalizeContext({ messages: [] });
@@ -54,6 +63,31 @@ function terminalMessage(overrides: Partial<AssistantMessage> = {}): AssistantMe
     errorMessage: "provider failed",
     timestamp: 0,
     ...overrides,
+  };
+}
+
+function durableAssistantError(): AssistantMessage & ModelHttpErrorMetadata {
+  return {
+    role: "assistant",
+    content: [
+      { type: "thinking", thinking: "private chain", thinkingSignature: "opaque-provider-payload" },
+      { type: "text", text: "partial answer" },
+    ],
+    api: "openai-responses",
+    provider: "openai",
+    model: "example-model",
+    usage: {
+      input: 1,
+      output: 2,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 3,
+      cost: { input: 0.1, output: 0.2, cacheRead: 0, cacheWrite: 0, total: 0.3 },
+    },
+    stopReason: "error",
+    errorMessage: "Rate limit exceeded.",
+    timestamp: 1792200000000,
+    piWebUiHttpStatus: 429,
   };
 }
 
@@ -547,6 +581,69 @@ describe("withModelHttpErrorStatus", () => {
     expect(events).toHaveLength(1);
     expect(events[0]?.type).toBe("error");
     expect(events[0]?.type === "error" ? events[0].error : undefined).toBe(result);
+  });
+
+  it("persists coded assistant errors through JSONL, reload, browser projection, and history normalization", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pi-webui-model-http-error-session-"));
+    const sessionDir = join(root, "sessions");
+    const cwd = join(root, "workspace");
+    const rawMessage = durableAssistantError();
+
+    try {
+      const manager = SessionManager.create(cwd, sessionDir, { id: "coded-error-session" });
+      manager.appendMessage(rawMessage);
+      const sessionFile = manager.getSessionFile();
+      if (sessionFile === undefined) throw new Error("Expected a persisted session file.");
+
+      const jsonl = await readFile(sessionFile, "utf8");
+      const persistedEntries: unknown[] = jsonl.trim().split("\n").map((line): unknown => JSON.parse(line));
+      expect(persistedEntries).toContainEqual(expect.objectContaining({ type: "message", message: rawMessage }));
+      expect(jsonl).toContain('"piWebUiHttpStatus":429');
+
+      const reopened = SessionManager.open(sessionFile, sessionDir);
+      const branchMessage = reopened.getBranch().find((entry) => entry.type === "message");
+      const reopenedMessage = branchMessage?.type === "message" ? branchMessage.message : undefined;
+      expect(reopenedMessage).toEqual(rawMessage);
+
+      const context = buildSessionContext(reopened.getBranch(), reopened.getLeafId());
+      expect(context.messages).toEqual([rawMessage]);
+
+      const projectedHistory = projectBrowserMessageResponse({ messages: [rawMessage], start: 0, total: 1 });
+      const projectedEvent = projectBrowserSessionEvent({ type: "message.end", message: rawMessage });
+      const expectedBrowserMessage = {
+        ...rawMessage,
+        content: [
+          { type: "thinking", thinking: "private chain" },
+          { type: "text", text: "partial answer" },
+        ],
+      };
+      expect(projectedHistory).toEqual({ messages: [expectedBrowserMessage], start: 0, total: 1 });
+      expect(projectedEvent).toEqual({ type: "message.end", message: expectedBrowserMessage });
+      if (projectedEvent.type !== "message.end" || projectedEvent.message === undefined) throw new Error("Expected a projected final-message event.");
+      expect(projectedHistory).toEqual({ messages: [projectedEvent.message], start: 0, total: 1 });
+
+      const liveLines = normalizeMessages([projectedEvent.message]);
+      const reopenedHistoryLines = normalizeMessages(context.messages);
+      const cachedRawHistoryLines = normalizeMessages([rawMessage]);
+      const expectedLines = [
+        {
+          role: "assistant" as const,
+          parts: [{ type: "thinking" as const, text: "private chain" }, { type: "text" as const, text: "partial answer" }],
+          meta: { timestamp: "2026-10-17T01:20:00.000Z", model: { provider: "openai", id: "example-model" } },
+        },
+        {
+          role: "system" as const,
+          parts: [{ type: "text" as const, text: "Model response failed (HTTP 429): Rate limit exceeded." }],
+          meta: { timestamp: "2026-10-17T01:20:00.000Z", model: { provider: "openai", id: "example-model" } },
+        },
+      ];
+      expect(liveLines).toEqual(expectedLines);
+      expect(reopenedHistoryLines).toEqual(expectedLines);
+      expect(cachedRawHistoryLines).toEqual(expectedLines);
+      expect(rawMessage).toEqual(durableAssistantError());
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("is idempotent when the same delegate is wrapped repeatedly", () => {

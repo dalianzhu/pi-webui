@@ -49,6 +49,40 @@ describe("browser message projection", () => {
     expect(page.messages[0]).toBe(message);
   });
 
+  it("retains coded assistant errors in history and live final-message projections", () => {
+    const message = {
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "private chain", thinkingSignature: "opaque-provider-payload" },
+        { type: "text", text: "partial answer" },
+      ],
+      api: "openai-responses",
+      provider: "openai",
+      model: "example-model",
+      stopReason: "error",
+      errorMessage: "Rate limit exceeded.",
+      timestamp: 1792200000000,
+      piWebUiHttpStatus: 429,
+    };
+    const beforeProjection = structuredClone(message);
+    const expected = {
+      ...message,
+      content: [
+        { type: "thinking", thinking: "private chain" },
+        { type: "text", text: "partial answer" },
+      ],
+    };
+    const history = projectBrowserMessageResponse({ messages: [message], start: 0, total: 1 });
+    const event = projectBrowserSessionEvent({ type: "message.end", message });
+
+    expect(history).toEqual({ messages: [expected], start: 0, total: 1 });
+    expect(event).toEqual({ type: "message.end", message: expected });
+    if (event.type !== "message.end" || event.message === undefined) throw new Error("Expected a projected final-message event.");
+    expect(history).toEqual({ messages: [event.message], start: 0, total: 1 });
+    expect(message).toEqual(beforeProjection);
+    expect(expected.piWebUiHttpStatus).toBe(429);
+  });
+
   it("projects final-message events but leaves other event shapes untouched", () => {
     const message = signedAssistantMessage();
     const finalEvent = { type: "message.end" as const, message };

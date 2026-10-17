@@ -542,9 +542,11 @@ describe("API parsers", () => {
     });
   });
 
-  it("accepts legacy array message pages and paged message responses", () => {
+  it("accepts legacy array message pages and preserves additive model status metadata", () => {
+    const codedMessage = { role: "assistant", stopReason: "error", piWebUiHttpStatus: 429 };
     expect(parseMessagePage(["a", "b"])).toEqual({ messages: ["a", "b"], start: 0, total: 2 });
-    expect(parseMessagePage({ messages: ["c"], start: 3, total: 9 })).toEqual({ messages: ["c"], start: 3, total: 9 });
+    expect(parseMessagePage({ messages: [codedMessage], start: 3, total: 9 })).toEqual({ messages: [codedMessage], start: 3, total: 9 });
+    expect(parseMessagePage({ messages: [codedMessage], start: 3, total: 9 }).messages[0]).toHaveProperty("piWebUiHttpStatus", 429);
   });
 
   it("parses a session stream snapshot, defaulting a missing partial to null", () => {
