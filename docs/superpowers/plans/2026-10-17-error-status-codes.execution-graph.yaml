@@ -1,0 +1,171 @@
+schema_version: 1
+source_plan:
+  path: docs/superpowers/plans/2026-10-17-error-status-codes.md
+  sha256: bad723fbf0af83fd4a82fbc5ab89d7bdee84f967119faad89615389fa3f867f3
+  commit_oid: cf2f1a216a43699fccbd70a3083fc50208947635
+  validated_at: 2026-10-17T14:54:30Z
+  parsed_tasks: [1, 2, 3, 4]
+source_context:
+  worktree: /data/home/henry-arch/.local/state/pi/project-manager/worktrees/4074842dc9aaf003446194e3e1d1201d34aca2f4bd236012ec3be919dd6e7164/pm-run-20261017-030352-869b50c2/integration
+  commit: cf2f1a216a43699fccbd70a3083fc50208947635
+target:
+  repository_root: /data/home/guest/Development/pi-webui
+  remote: origin
+  remote_url: git@github.com:hyperdreamer/pi-webui.git
+  branch: refs/heads/main
+  worktree: /data/home/guest/Development/pi-webui
+  base_commit: 3f7e949bab02b65839359b652fcbfcb500dd2d6b
+integration:
+  branch: refs/heads/pm/error-status-codes/run-pm-run-20261017-030352-869b50c2
+  worktree: /data/home/henry-arch/.local/state/pi/project-manager/worktrees/4074842dc9aaf003446194e3e1d1201d34aca2f4bd236012ec3be919dd6e7164/pm-run-20261017-030352-869b50c2/integration
+  base_commit: 3f7e949bab02b65839359b652fcbfcb500dd2d6b
+  current_commit: cf2f1a216a43699fccbd70a3083fc50208947635
+epoch: 1
+tasks:
+  - id: T-001
+    plan_task: 1
+    lane: core
+    sequence: 1
+    title: "Add Shared Status Reading and Exact Client Formatting"
+    depends_on: []
+    owns:
+      - src/shared/modelHttpError.ts
+      - src/shared/modelHttpError.test.ts
+      - src/client/src/modelErrorText.ts
+      - src/client/src/modelErrorText.test.ts
+    exclusive_resources: []
+    produces:
+      - id: iface.model-http-error-reader
+        signature: "src/shared/modelHttpError.ts exports ModelHttpErrorMetadata; isHttpErrorStatus(value: unknown): value is number; readModelHttpErrorStatus(message: unknown): number | undefined"
+        sha256: fec3f8d82f5e4b0e0f92f008c2187301d70184668a683327351ca6709bd7de28
+      - id: iface.model-error-formatter
+        signature: "src/client/src/modelErrorText.ts exports formatAssistantModelError(message: unknown): string | undefined"
+        sha256: 744ef4814c30c774b6b6bf80fba1a3c91ff4afe6c9006686d128fe0f693600ee
+    consumes: []
+    interfaces:
+      produces:
+        - id: iface.model-http-error-reader
+          signature: "src/shared/modelHttpError.ts exports ModelHttpErrorMetadata; isHttpErrorStatus(value: unknown): value is number; readModelHttpErrorStatus(message: unknown): number | undefined"
+          sha256: fec3f8d82f5e4b0e0f92f008c2187301d70184668a683327351ca6709bd7de28
+        - id: iface.model-error-formatter
+          signature: "src/client/src/modelErrorText.ts exports formatAssistantModelError(message: unknown): string | undefined"
+          sha256: 744ef4814c30c774b6b6bf80fba1a3c91ff4afe6c9006686d128fe0f693600ee
+      consumes: []
+    validation:
+      - argv: ["npm", "test", "--", "--run", "src/shared/modelHttpError.test.ts", "src/client/src/modelErrorText.test.ts"]
+        cwd: lane
+        timeout_seconds: 180
+  - id: T-002
+    plan_task: 2
+    lane: core
+    sequence: 2
+    title: "Implement the Per-Dispatch Stream Status Adapter"
+    depends_on: [T-001]
+    owns:
+      - src/server/sessions/modelHttpErrorStream.ts
+      - src/server/sessions/modelHttpErrorStream.test.ts
+    exclusive_resources: []
+    produces:
+      - id: iface.model-http-error-stream
+        signature: "src/server/sessions/modelHttpErrorStream.ts exports withModelHttpErrorStatus(delegate: StreamFn): StreamFn"
+        sha256: 21e1c53487bf8177fd7d19409e3c1246c013fce1f3a3a6928fe2779ee0ecd2bd
+    consumes:
+      - producer_task: T-001
+        interface_id: iface.model-http-error-reader
+        sha256: fec3f8d82f5e4b0e0f92f008c2187301d70184668a683327351ca6709bd7de28
+    interfaces:
+      produces:
+        - id: iface.model-http-error-stream
+          signature: "src/server/sessions/modelHttpErrorStream.ts exports withModelHttpErrorStatus(delegate: StreamFn): StreamFn"
+          sha256: 21e1c53487bf8177fd7d19409e3c1246c013fce1f3a3a6928fe2779ee0ecd2bd
+      consumes:
+        - producer_task: T-001
+          interface_id: iface.model-http-error-reader
+          sha256: fec3f8d82f5e4b0e0f92f008c2187301d70184668a683327351ca6709bd7de28
+    validation:
+      - argv: ["npm", "test", "--", "--run", "src/server/sessions/modelHttpErrorStream.test.ts"]
+        cwd: lane
+        timeout_seconds: 300
+  - id: T-003
+    plan_task: 3
+    lane: core
+    sequence: 3
+    title: "Compose the Decorated Runtime with Sessions and Rate Limits"
+    depends_on: [T-002]
+    owns:
+      - src/server/sessions/modelHttpErrorStream.ts
+      - src/server/sessions/piSessionService.ts
+      - src/server/sessions/piSessionService.rateLimits.test.ts
+      - src/server/sessions/sessionRuntimeRestore.factory.test.ts
+      - src/server/sessions/modelHttpErrorRuntime.test.ts
+    exclusive_resources: []
+    produces:
+      - id: iface.model-http-error-runtime
+        signature: "src/server/sessions/modelHttpErrorStream.ts exports withModelHttpErrorStatusRuntime(modelRuntime: ModelRuntime): ModelRuntime"
+        sha256: b8f6107b225674d689e03c851944547c4b6d23aa0ac517cc1bc7eabf9568bb26
+    consumes:
+      - producer_task: T-002
+        interface_id: iface.model-http-error-stream
+        sha256: 21e1c53487bf8177fd7d19409e3c1246c013fce1f3a3a6928fe2779ee0ecd2bd
+    interfaces:
+      produces:
+        - id: iface.model-http-error-runtime
+          signature: "src/server/sessions/modelHttpErrorStream.ts exports withModelHttpErrorStatusRuntime(modelRuntime: ModelRuntime): ModelRuntime"
+          sha256: b8f6107b225674d689e03c851944547c4b6d23aa0ac517cc1bc7eabf9568bb26
+      consumes:
+        - producer_task: T-002
+          interface_id: iface.model-http-error-stream
+          sha256: 21e1c53487bf8177fd7d19409e3c1246c013fce1f3a3a6928fe2779ee0ecd2bd
+    validation:
+      - argv: ["npm", "test", "--", "--run", "src/server/sessions/modelHttpErrorRuntime.test.ts", "src/server/sessions/piSessionService.rateLimits.test.ts", "src/server/sessions/sessionRuntimeRestore.factory.test.ts"]
+        cwd: lane
+        timeout_seconds: 300
+  - id: T-004
+    plan_task: 4
+    lane: core
+    sequence: 4
+    title: "Wire Client History Parity and Release Handoff"
+    depends_on: [T-003]
+    owns:
+      - src/client/src/chatMessages.ts
+      - src/client/src/chatMessages.test.ts
+      - src/client/src/chatTranscript.test.ts
+      - src/client/src/chatHistoryCache.test.ts
+      - src/client/src/api/parsers.test.ts
+      - src/server/browserMessageProjection.test.ts
+      - src/server/sessions/modelHttpErrorStream.test.ts
+      - .changeset/show-model-http-error-status.md
+    exclusive_resources: []
+    produces: []
+    consumes:
+      - producer_task: T-001
+        interface_id: iface.model-error-formatter
+        sha256: 744ef4814c30c774b6b6bf80fba1a3c91ff4afe6c9006686d128fe0f693600ee
+      - producer_task: T-001
+        interface_id: iface.model-http-error-reader
+        sha256: fec3f8d82f5e4b0e0f92f008c2187301d70184668a683327351ca6709bd7de28
+      - producer_task: T-002
+        interface_id: iface.model-http-error-stream
+        sha256: 21e1c53487bf8177fd7d19409e3c1246c013fce1f3a3a6928fe2779ee0ecd2bd
+    interfaces:
+      produces: []
+      consumes:
+        - producer_task: T-001
+          interface_id: iface.model-error-formatter
+          sha256: 744ef4814c30c774b6b6bf80fba1a3c91ff4afe6c9006686d128fe0f693600ee
+        - producer_task: T-001
+          interface_id: iface.model-http-error-reader
+          sha256: fec3f8d82f5e4b0e0f92f008c2187301d70184668a683327351ca6709bd7de28
+        - producer_task: T-002
+          interface_id: iface.model-http-error-stream
+          sha256: 21e1c53487bf8177fd7d19409e3c1246c013fce1f3a3a6928fe2779ee0ecd2bd
+    validation:
+      - argv: ["npm", "run", "verify:fast"]
+        cwd: lane
+        timeout_seconds: 900
+      - argv: ["npm", "run", "verify"]
+        cwd: lane
+        timeout_seconds: 1200
+lanes:
+  - id: core
+    task_ids: [T-001, T-002, T-003, T-004]

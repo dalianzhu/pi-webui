@@ -1,0 +1,21 @@
+digraph execution_graph {
+    rankdir=LR;
+    compound=true;
+    node [shape=box, style=rounded, fontname="Helvetica"];
+    edge [fontname="Helvetica", fontsize=10];
+
+    subgraph cluster_core {
+        label = "Lane: core";
+        style = filled;
+        color = lightgrey;
+        node [style=filled, color=white];
+        "T-001" [label="T-001 (Task 1)\nAdd Shared Status Reading and Exact Client Formatting\n[Advanced]"];
+        "T-002" [label="T-002 (Task 2)\nImplement the Per-Dispatch Stream Status Adapter\n[Frontier]"];
+        "T-003" [label="T-003 (Task 3)\nCompose the Decorated Runtime with Sessions and Rate Limits\n[Frontier]"];
+        "T-004" [label="T-004 (Task 4)\nWire Client History Parity and Release Handoff\n[Advanced]"];
+    }
+
+    "T-001" -> "T-002" [label="lane sequence & consumes iface.model-http-error-reader"];
+    "T-002" -> "T-003" [label="lane sequence & consumes iface.model-http-error-stream"];
+    "T-003" -> "T-004" [label="lane sequence"];
+}
