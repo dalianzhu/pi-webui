@@ -37,7 +37,6 @@
     "build:plugin-api": "tsc -p tsconfig.plugin-api.json",
     "build:plugins": "tsc -p tsconfig.plugins.json && node scripts/build-plugins.mjs",
     "capture:screenshots": "node scripts/capture-screenshots.mjs",
-    "verify:narrow-navigation-machine-indicator": "node scripts/verify-narrow-navigation-machine-indicator.mjs",
     "typecheck": "tsc --noEmit",
     "typecheck:cached": "tsc --noEmit --incremental --tsBuildInfoFile node_modules/.cache/pi-webui/typecheck.tsbuildinfo",
     "knip": "knip",

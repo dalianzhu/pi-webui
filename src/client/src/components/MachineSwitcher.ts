@@ -62,7 +62,6 @@ export class MachineSwitcher extends LitElement implements KeyboardNavigableSect
           title=${machineTitle(selected)}
           aria-label=${this.machineSwitcherAriaLabel(selected)}
           aria-expanded=${String(this.open)}
-          aria-describedby="machine-status-description"
           @click=${(event: MouseEvent) => { this.toggleMenu(event.currentTarget); }}
           @keydown=${(event: KeyboardEvent) => { this.handleSwitcherButtonKeydown(event); }}
         >
@@ -71,10 +70,9 @@ export class MachineSwitcher extends LitElement implements KeyboardNavigableSect
             <span class="machine-switcher-kicker">Machine</span>
             <span class="machine-switcher-label">${label}</span>
           </span>
-          <span class=${`machine-status ${status}`} title=${machineStatusLabel(status)}>${machineStatusLabel(status)}</span>
+          <span class=${`machine-status ${status}`}>${machineStatusLabel(status)}</span>
           <span class="machine-chevron" aria-hidden="true">▾</span>
         </button>
-        <span id="machine-status-description" class="machine-status-description">Machine status: ${machineStatusLabel(status)}.</span>
         ${this.open ? html`
           <div class="machine-switcher-menu" style=${this.menuStyle} @click=${(event: MouseEvent) => { event.stopPropagation(); }}>
             ${this.machines.map((machine) => this.renderMachineOption(machine))}
@@ -284,10 +282,6 @@ export class MachineSwitcher extends LitElement implements KeyboardNavigableSect
     .machine-status { flex: 0 0 auto; color: var(--pi-muted); font-size: 11px; }
     .machine-status.online { color: var(--pi-success); }
     .machine-status.offline, .machine-status.error { color: var(--pi-danger); }
-    .machine-status-description { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); clip-path: inset(50%); white-space: nowrap; border: 0; }
-    @container navigation-header (inline-size < 416px) {
-      .machine-switcher-button > .machine-status { width: 7px; height: 7px; border-radius: 50%; background: currentColor; font-size: 0; overflow: hidden; }
-    }
     .machine-chevron { flex: 0 0 auto; color: var(--pi-muted); font-size: 11px; }
     .activity-indicator { flex: 0 0 auto; display: inline-block; width: 7px; height: 7px; background: var(--pi-success); animation: pulse 1s ease-in-out infinite; }
     .activity-indicator.session { border-radius: 50%; background: var(--pi-success); }

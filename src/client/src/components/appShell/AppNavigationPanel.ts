@@ -124,7 +124,7 @@ export class AppNavigationPanel extends LitElement {
     const version = this.version;
     return html`
       <header>
-        <strong class="brand" aria-label=${version === undefined ? "Pi WebUI" : `Pi WebUI version ${version}`}><span class="brand-symbol" aria-hidden="true">π</span><span class="brand-wordmark">WebUI</span>${version === undefined ? null : html`<span class="brand-version">v${version}</span>`}</strong>
+        <strong class="brand" aria-label=${version === undefined ? "Pi WebUI" : `Pi WebUI version ${version}`}><span class="brand-symbol" aria-hidden="true">π</span><span>WebUI</span>${version === undefined ? null : html`<span class="brand-version">v${version}</span>`}</strong>
         ${shouldShowMachinesSection(this.machines) ? html`
           <machine-switcher
             .machines=${this.machines}
@@ -272,7 +272,7 @@ export class AppNavigationPanel extends LitElement {
   }
 
   static override styles = css`
-    :host { display: flex; flex-direction: column; min-height: 0; overflow: hidden; container-type: inline-size; container-name: navigation-header; }
+    :host { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
     :host([compact]) { flex: 1 1 auto; }
     header { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px; border-bottom: 1px solid var(--pi-border); }
     header strong { flex: 0 0 auto; }
@@ -303,14 +303,6 @@ export class AppNavigationPanel extends LitElement {
     :host([compact]) workspace-list[collapsed],
     :host([compact]) session-list[collapsed] { flex: 0 0 auto; min-height: auto; overflow: hidden; }
     button { border: 1px solid var(--pi-border); border-radius: 8px; background: var(--pi-surface); color: var(--pi-text); padding: 7px 9px; cursor: pointer; }
-    @container navigation-header (inline-size < 416px) {
-      header { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 4px; row-gap: 8px; padding: 8px; }
-      .brand { grid-row: 1; grid-column: 1; }
-      .header-actions { grid-row: 1; grid-column: 2; gap: 4px; }
-      machine-switcher { grid-row: 2; grid-column: 1 / -1; min-width: 0; }
-      .header-actions > button { padding-inline: 3px; white-space: nowrap; }
-      .brand-wordmark, .brand-version { display: none; }
-    }
   `;
 }
 
