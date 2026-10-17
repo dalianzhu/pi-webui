@@ -226,6 +226,7 @@ import {
   type ModelPolicySettingsSnapshot,
 } from "./modelPolicySettingsPersistence.js";
 import { wrapModelStream } from "../rateLimits/modelRateLimitAdapters.js";
+import { withModelHttpErrorStatusRuntime } from "./modelHttpErrorStream.js";
 import type { ModelRateLimitOwner } from "../rateLimits/modelRateLimitOwner.js";
 
 /**
@@ -1061,18 +1062,19 @@ export function createDefaultRuntimeFactory(
     initialThinkingLevel,
     delegationToolsEnabled,
   }) => {
+    const statusModelRuntime = withModelHttpErrorStatusRuntime(modelRuntime);
     const runtimeRefs: UtilityModelExtensionRuntimeRefs = {};
     const services = await sdk.createServices({
       cwd,
       agentDir,
-      modelRuntime,
+      modelRuntime: statusModelRuntime,
       resourceLoaderOptions: {
         extensionFactories: [
           createUtilityModelExtension({
             // Pi's ExtensionContext exposes Model<any>; production candidates still come from ModelRuntime's Model<Api> snapshot.
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
             resolver: utilityModelResolver,
-            modelRuntime,
+            modelRuntime: statusModelRuntime,
             refs: runtimeRefs,
             logger,
           }),
