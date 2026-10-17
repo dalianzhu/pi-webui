@@ -166,7 +166,7 @@ function createCaptureState(): CaptureState {
 
       const attempt = ++nextAttempt;
       latestAttempt = attempt;
-      if (activeAttempts.size > 0) {
+      if (activeAttempts.size > 0 || observation.kind === "ambiguous") {
         observation = { kind: "ambiguous" };
       } else {
         observation = { kind: "pending", attempt };

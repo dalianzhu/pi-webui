@@ -361,6 +361,86 @@ describe("withModelHttpErrorStatus", () => {
     expectNoStatus(result);
   });
 
+  it("keeps overlap ambiguity sticky through a later serial fetch", async () => {
+    const first = deferred<Response>();
+    const second = deferred<Response>();
+    const fetch = vi.fn<typeof globalThis.fetch>((input) => {
+      if (input === "first") return first.promise;
+      if (input === "second") return second.promise;
+      return Promise.resolve(response(503));
+    });
+    const delegate: StreamFn = (_model, _context, options) => {
+      const stream = createAssistantMessageEventStream();
+      void (async () => {
+        await Promise.all([
+          options?.fetch?.("first"),
+          options?.fetch?.("second"),
+        ]);
+        await options?.fetch?.("serial-tail");
+        const message = terminalMessage();
+        stream.push({ type: "error", reason: "error", error: message });
+        stream.end(message);
+      })();
+      return stream;
+    };
+
+    const stream = await invokeWrapped(withModelHttpErrorStatus(delegate), SUPPORTED_MODEL, { fetch });
+    const eventsPromise = terminalEvents(stream);
+    const resultPromise = stream.result();
+    second.resolve(response(400));
+    first.resolve(response(429));
+
+    const result = await resultPromise;
+    const events = await eventsPromise;
+    expect(events).toHaveLength(1);
+    expect(events[0]?.type === "error" ? events[0].error : undefined).toBe(result);
+    expectNoStatus(result);
+    expect(events[0]?.type === "error" ? events[0].error : undefined).toEqual(result);
+  });
+
+  it("freezes capture before awaiting a delayed authoritative result", async () => {
+    const pendingFetch = deferred<Response>();
+    const sourceResult = deferred<AssistantMessage>();
+    const sourceTerminalDelivered = deferred<true>();
+    const fetch = vi.fn<typeof globalThis.fetch>(() => pendingFetch.promise);
+    const sourceResultMessage = terminalMessage({ errorMessage: "authoritative result" });
+    const source = new (class extends AssistantMessageEventStream {
+      public override async *[Symbol.asyncIterator](): AsyncGenerator<AssistantMessageEvent> {
+        await Promise.resolve();
+        sourceTerminalDelivered.resolve(true);
+        yield { type: "error", reason: "error", error: terminalMessage({ errorMessage: "event terminal" }) };
+      }
+
+      public override result(): Promise<AssistantMessage> {
+        return sourceResult.promise;
+      }
+    })();
+    const delegate: StreamFn = (_model, _context, options) => {
+      void options?.fetch?.("request");
+      return source;
+    };
+
+    const wrapper = await invokeWrapped(withModelHttpErrorStatus(delegate), SUPPORTED_MODEL, { fetch });
+    const resultPromise = wrapper.result();
+    const eventsPromise = terminalEvents(wrapper);
+    await sourceTerminalDelivered.promise;
+
+    pendingFetch.resolve(response(429));
+    await Promise.resolve();
+    let settled = false;
+    void resultPromise.then(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    sourceResult.resolve(sourceResultMessage);
+    const result = await resultPromise;
+    const events = await eventsPromise;
+    expect(events).toHaveLength(1);
+    expect(events[0]?.type === "error" ? events[0].error : undefined).toBe(result);
+    expect(result).toBe(sourceResultMessage);
+    expectNoStatus(result);
+  });
+
   it("ignores a response that arrives after finalization", async () => {
     const pending = deferred<Response>();
     const fetch = vi.fn<typeof globalThis.fetch>(() => pending.promise);

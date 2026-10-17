@@ -37,13 +37,13 @@ function explicitlyDisplaysHttpStatus(detail: string, status: number): boolean {
   );
   if (providerWrapper.test(detail)) return true;
 
-  const startToken = new RegExp(`^${httpNumber}[ \\t]+(?:${statusLabel}\\b|\\{|rate[- \\t]+limit\\b|[A-Za-z]+(?:[ \\t-]+[A-Za-z]+)*[ \\t]*:)`, "u");
+  const startToken = new RegExp(`^${httpNumber}[ \\t]+(?:${statusLabel}\\b|\\{|rate[- \\t]+limit\\b|[A-Za-z]+(?:[ \\t-]+[A-Za-z]+)*[ \\t]*:)`, "iu");
   if (startToken.test(detail)) return true;
 
-  const startColon = new RegExp(`^${httpNumber}[ \\t]*:(?=[ \\t\\{]|$)`, "u");
+  const startColon = new RegExp(`^${httpNumber}\\s*:(?=[\\s\\{]|$)`, "iu");
   if (startColon.test(detail)) return true;
 
-  const nestedToken = new RegExp(`(?:^|[ \\t:])${httpNumber}:(?=[ \\t\\{]|$)`, "u");
+  const nestedToken = new RegExp(`(?:^|[\\s:])${httpNumber}:(?=[\\s\\{]|$)`, "iu");
   return nestedToken.test(detail);
 }
 

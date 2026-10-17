@@ -39,6 +39,11 @@ describe("formatAssistantModelError", () => {
       [429, "Unknown: 429: quota exhausted"],
       [429, "429 rate limit"],
       [429, "429 rate-limit"],
+      [429, "429 RATE LIMIT"],
+      [400, "400 STATUS CODE (no body)"],
+      [429, "Unknown:\n429: quota exhausted"],
+      [429, "Unknown: 429:\nquota exhausted"],
+      [429, "UNKNOWN: 429:\nQUOTA EXHAUSTED"],
       [429, "provider returned 429"],
     ];
     for (const [status, detail] of cases) {
