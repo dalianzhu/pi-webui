@@ -1,0 +1,80 @@
+{
+  "source_plan": {
+    "path": "docs/superpowers/plans/2026-10-17-narrow-navigation-header.md",
+    "sha256": "7d90946568e0dd3a280ccdb423f0b5cbb9ad8012797998cfbd5faa91751cd310",
+    "commit_oid": "3c6b6914a9cf8d945d5283a64058088c306c77ca"
+  },
+  "schema_version": 1,
+  "tasks": [
+    {
+      "number": 1,
+      "title": "Raise the navigation resize floor and pin preference compatibility",
+      "tier": "standard",
+      "files": [
+        "`src/client/src/appShell/panelResizeController.ts:37-42` \u2014 `PANEL_RESIZE_CONSTRAINTS.navigation.minWidth` only.",
+        "`src/client/src/appShell/panelResizeController.test.ts:1-115` \u2014 clamp, drag, keyboard, and raw preference regressions."
+      ]
+    },
+    {
+      "number": 2,
+      "title": "Implement the local header layout and accessible machine presentation",
+      "tier": "advanced",
+      "files": [
+        "`src/client/src/components/MachineSwitcher.ts:48-289` \u2014 selected-button markup, minimal open-trigger keyboard dismissal, and local CSS; `:312-325` \u2014 `machineTitle()` (baseline line numbers).",
+        "`src/client/src/components/MachineSwitcher.test.ts` \u2014 real jsdom component tests and static stylesheet checks.",
+        "`src/client/src/components/appShell/AppNavigationPanel.ts:274-288` \u2014 host container and version-label query only in this task.",
+        "`src/client/src/components/appShell/AppNavigationPanel.test.ts:1-192` \u2014 DOM wordmark, header omission, and callback-forwarding regressions."
+      ]
+    },
+    {
+      "number": 3,
+      "title": "Move PWA refresh into the fixed rail slot and context bar",
+      "tier": "advanced",
+      "files": [
+        "`src/client/src/appShell/appShellController.ts:49-59` \u2014 refresh predicates.",
+        "`src/client/src/appShell/appShellController.test.ts:1-98` \u2014 permission matrix and media transitions.",
+        "`src/client/src/components/ActivityRail.ts:15-89` and `:365-415` \u2014 new properties/callback and fixed reload renderer.",
+        "`src/client/src/components/ActivityRail.test.ts:1-489` \u2014 reload DOM, invocation, position, and reorder exclusions.",
+        "`src/client/src/components/PiWebUiApp.ts:2470-2514` and `:4892-4921` \u2014 remove header binding and add rail bindings inside `render()`; keep context-bar/renderAppRefresh/hardReloadApp unchanged.",
+        "`src/client/src/components/appShell/AppNavigationPanel.ts:140-143` \u2014 remove refresh interpolation, retain declaration.",
+        "`src/client/src/components/appShell/AppNavigationPanel.test.ts` \u2014 prove supplied legacy refresh content is not rendered."
+      ]
+    },
+    {
+      "number": 4,
+      "title": "Add the deterministic Chromium geometry and native-input gate",
+      "tier": "advanced",
+      "files": [
+        "`scripts/verify-narrow-navigation-header.mjs` \u2014 self-contained parent runner, Vite child mode, virtual fixtures, assertions, and cleanup.",
+        "`package.json:30-50` \u2014 add only `\"verify:narrow-navigation-header\": \"node scripts/verify-narrow-navigation-header.mjs\"` beside the existing screenshot/verification scripts."
+      ]
+    },
+    {
+      "number": 5,
+      "title": "Document the behaviour, add a patch changeset, and run final acceptance",
+      "tier": "standard",
+      "files": [
+        "`.changeset/narrow-navigation-header.md` \u2014 one patch release note for the complete user-visible fix.",
+        "`docs/navigation-panel.md` \u2014 canonical concise operating guidance for navigation width, progressive disclosure, and refresh placement."
+      ]
+    }
+  ],
+  "lanes": {
+    "navigation-header": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ]
+  },
+  "dependencies": {
+    "4": [
+      "2",
+      "3"
+    ],
+    "5": [
+      "4"
+    ]
+  }
+}
