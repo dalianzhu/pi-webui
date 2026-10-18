@@ -272,13 +272,14 @@ export class AppNavigationPanel extends LitElement {
   }
 
   static override styles = css`
-    :host { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+    :host { display: flex; flex-direction: column; min-height: 0; overflow: hidden; container-type: inline-size; container-name: navigation-header; }
     :host([compact]) { flex: 1 1 auto; }
     header { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px; border-bottom: 1px solid var(--pi-border); }
     header strong { flex: 0 0 auto; }
     .brand { display: inline-flex; align-items: center; gap: 5px; }
     .brand-symbol { font-size: 28px; font-weight: 700; line-height: 1; }
     .brand-version { color: var(--pi-muted); font-size: 12px; font-weight: 500; line-height: 1; }
+    @container navigation-header (inline-size < 372px) { .brand-version { display: none; } }
     machine-switcher { flex: 1 1 auto; min-width: 0; }
     :host([compact]) header { display: none; }
     .header-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; }

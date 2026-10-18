@@ -62,6 +62,7 @@ export class MachineSwitcher extends LitElement implements KeyboardNavigableSect
           title=${machineTitle(selected)}
           aria-label=${this.machineSwitcherAriaLabel(selected)}
           aria-expanded=${String(this.open)}
+          aria-describedby="machine-status-description"
           @click=${(event: MouseEvent) => { this.toggleMenu(event.currentTarget); }}
           @keydown=${(event: KeyboardEvent) => { this.handleSwitcherButtonKeydown(event); }}
         >
@@ -70,9 +71,10 @@ export class MachineSwitcher extends LitElement implements KeyboardNavigableSect
             <span class="machine-switcher-kicker">Machine</span>
             <span class="machine-switcher-label">${label}</span>
           </span>
-          <span class=${`machine-status ${status}`}>${machineStatusLabel(status)}</span>
+          <span class=${`machine-status ${status}`} title=${machineStatusLabel(status)}>${machineStatusLabel(status)}</span>
           <span class="machine-chevron" aria-hidden="true">▾</span>
         </button>
+        <span id="machine-status-description">Machine status: ${machineStatusLabel(status)}.</span>
         ${this.open ? html`
           <div class="machine-switcher-menu" style=${this.menuStyle} @click=${(event: MouseEvent) => { event.stopPropagation(); }}>
             ${this.machines.map((machine) => this.renderMachineOption(machine))}
@@ -150,7 +152,14 @@ export class MachineSwitcher extends LitElement implements KeyboardNavigableSect
     if (event.key === "ArrowRight" && this.onFocusNextSection !== undefined) {
       event.preventDefault();
       event.stopPropagation();
+      this.closeMenuWithoutFocus();
       void this.onFocusNextSection();
+      return;
+    }
+    if ((event.key === "Escape" || event.key === "ArrowLeft") && this.open) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.closeMenuAndFocusSwitcherButton();
       return;
     }
     if (event.key === "Escape" && this.onCancelKeyboardNavigation !== undefined) {
@@ -187,9 +196,18 @@ export class MachineSwitcher extends LitElement implements KeyboardNavigableSect
     if (event.key === "ArrowLeft" || event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
-      this.open = false;
-      void this.updateComplete.then(() => { this.focusSwitcherButton(); });
+      this.closeMenuAndFocusSwitcherButton();
     }
+  }
+
+  private closeMenuWithoutFocus(): void {
+    this.open = false;
+    this.openActionsMachineId = undefined;
+  }
+
+  private closeMenuAndFocusSwitcherButton(): void {
+    this.closeMenuWithoutFocus();
+    void this.updateComplete.then(() => { this.focusSwitcherButton(); });
   }
 
   private toggleMenu(target: EventTarget | null): void {
@@ -272,16 +290,27 @@ export class MachineSwitcher extends LitElement implements KeyboardNavigableSect
   }
 
   static override styles = css`
-    :host { min-width: 0; display: block; }
+    :host { min-width: 0; display: block; container-type: inline-size; container-name: machine-switcher; }
     .machine-switcher { min-width: 0; }
     .machine-switcher-button { box-sizing: border-box; width: 100%; min-width: 0; display: flex; align-items: center; gap: 6px; border: 1px solid var(--pi-border); border-radius: 999px; background: var(--pi-surface); color: var(--pi-text); padding: 5px 8px; cursor: pointer; text-align: left; }
     .machine-switcher-button:hover, .machine-switcher-button:focus-visible { border-color: var(--pi-accent); background: var(--pi-selection-bg); }
-    .machine-switcher-text { flex: 1 1 auto; min-width: 0; display: grid; gap: 1px; }
-    .machine-switcher-kicker { color: var(--pi-muted); font-size: 10px; line-height: 1; text-transform: uppercase; letter-spacing: .02em; }
+    .machine-switcher-text { flex: 1 1 auto; min-width: 48px; display: grid; gap: 1px; }
+    .machine-switcher-kicker { white-space: nowrap; color: var(--pi-muted); font-size: 10px; line-height: 1; text-transform: uppercase; letter-spacing: .02em; }
     .machine-switcher-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; line-height: 1.2; }
     .machine-status { flex: 0 0 auto; color: var(--pi-muted); font-size: 11px; }
     .machine-status.online { color: var(--pi-success); }
     .machine-status.offline, .machine-status.error { color: var(--pi-danger); }
+    #machine-status-description {
+      position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+      overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%);
+      white-space: nowrap; border: 0;
+    }
+    @container machine-switcher (width < 150px) {
+      .machine-switcher-button > .machine-status {
+        font-size: 0; width: 7px; height: 7px; border-radius: 50%;
+        background: currentColor; overflow: hidden; flex: 0 0 auto;
+      }
+    }
     .machine-chevron { flex: 0 0 auto; color: var(--pi-muted); font-size: 11px; }
     .activity-indicator { flex: 0 0 auto; display: inline-block; width: 7px; height: 7px; background: var(--pi-success); animation: pulse 1s ease-in-out infinite; }
     .activity-indicator.session { border-radius: 50%; background: var(--pi-success); }
@@ -316,7 +345,7 @@ function machineStatusLabel(status: MachineStatus): string {
 }
 
 function machineTitle(machine: Machine): string {
-  return machine.baseUrl ?? machine.name;
+  return machine.baseUrl === undefined ? machine.name : `${machine.name} — ${machine.baseUrl}`;
 }
 
 function machineSwitcherMenuStyle(target: EventTarget | null): string {
