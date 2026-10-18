@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { html } from "lit";
 import type { Machine, MachineStatus, SessionInfo, SessionReorderRequest } from "../../api";
 import { templateValueAfterMarker, templateValuesAfterMarker } from "../../templateInspection.testSupport";
 import { AppNavigationPanel, NAVIGATION_RESOURCE_UNDERBAR_ITEMS, navigationResourceUnderbarItemIsEnabled, shouldShowMachinesSection } from "./AppNavigationPanel";
@@ -183,6 +184,19 @@ describe("app-navigation-panel machine callback forwarding", () => {
     if (selectedOption === null) throw new Error("Expected the selected machine option");
     expect(selectedOption.getAttribute("data-machine-id")).toBe("remote");
     expect(switcherRoot(switcher).activeElement).toBe(selectedOption);
+  });
+});
+
+describe("app-navigation-panel header actions", () => {
+  it("does not render a supplied legacy header refresh control", async () => {
+    const panel = new AppNavigationPanel();
+    panel.refreshControl = html`<button data-refresh-sentinel>Legacy refresh</button>`;
+    document.body.append(panel);
+    await panel.updateComplete;
+
+    expect(panel.shadowRoot?.querySelector("[data-refresh-sentinel]")).toBeNull();
+    expect(panel.shadowRoot?.querySelector("app-refresh-control")).toBeNull();
+    expect(panel.shadowRoot?.querySelector('button[aria-label="Show Actions"]')).not.toBeNull();
   });
 });
 

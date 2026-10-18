@@ -2510,7 +2510,6 @@ export class PiWebUiApp extends LitElement {
         .workspacesCollapsed=${this.navigationSections.isCollapsed("workspaces")}
         .sessionsCollapsed=${this.navigationSections.isCollapsed("sessions")}
         .workspaceLabelItems=${(workspace: Workspace) => this.workspaceLabelItems(workspace)}
-        .refreshControl=${this.appShell.shouldShowAppRefreshInHeader() ? this.renderAppRefresh() : undefined}
         .onShowActions=${() => { this.setState({ actionPaletteOpen: true }); }}
         .skillsEnabled=${this.state.selectedWorkspace !== undefined}
         .pluginsEnabled=${this.state.selectedWorkspace !== undefined}
@@ -4912,6 +4911,8 @@ export class PiWebUiApp extends LitElement {
           .onOpenSettings=${() => { this.closeCompactActivityRail(); this.openSettings(); }}
           .railOrder=${this.railOrder}
           .onRailOrderChange=${this.handleRailOrderChange}
+          .showReload=${this.appShell.shouldShowAppRefreshInRail()}
+          .onReload=${() => { this.hardReloadApp(); }}
           .pluginItems=${this.activityRailItems()}
           .onOpenPluginActivity=${(id: QualifiedContributionId, source: HTMLElement) => {
             this.openActivityRailItem(id, () => { this.restoreActivityRailFocus(source); });

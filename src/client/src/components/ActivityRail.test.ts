@@ -1,11 +1,56 @@
+// @vitest-environment jsdom
+
 import { LitElement, html } from "lit";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ActivityRail } from "./ActivityRail";
 import { templateEventHandlerAfterMarker, templateText, templateClickHandlerForText, templateValueAfterMarker, templateEventHandlerNearMarker } from "../templateInspection.testSupport";
 import { type ReorderableRailItem } from "../activityRailOrder";
 import type { ActivityRailDisplayItem } from "../plugins/activityRail";
 
+async function mountRail(configure: (rail: ActivityRail) => void = () => undefined): Promise<ActivityRail> {
+  const rail = new ActivityRail();
+  configure(rail);
+  document.body.append(rail);
+  await rail.updateComplete;
+  return rail;
+}
+
+function railRoot(rail: ActivityRail): ShadowRoot {
+  const shadowRoot = rail.shadowRoot;
+  if (shadowRoot === null) throw new Error("Expected an open rail shadow root");
+  return shadowRoot;
+}
+
+function reloadButton(rail: ActivityRail): HTMLButtonElement {
+  const button = railRoot(rail).querySelector<HTMLButtonElement>(".rail-reload-button");
+  if (button === null) throw new Error("Expected the rail reload button");
+  return button;
+}
+
 type DesktopMediaListener = (event: MediaQueryListEvent) => void;
+
+/**
+ * jsdom exposes `window.matchMedia` as an undefined accessor, so every real
+ * `ActivityRail` construction needs an explicit media fake instead of trusting
+ * the environment. The stub is a full `MediaQueryList` because the component
+ * subscribes in `connectedCallback` and unsubscribes when disconnected.
+ */
+function mediaQueryList(matches: boolean): MediaQueryList {
+  return {
+    matches,
+    media: "(min-width: 1181px)",
+    onchange: null,
+    addListener: () => undefined,
+    removeListener: () => undefined,
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+    dispatchEvent: () => true,
+  };
+}
+
+beforeEach(() => {
+  vi.stubGlobal("matchMedia", () => mediaQueryList(true));
+});
 
 class FakeDesktopMediaQueryEvent extends Event {
   readonly media = "";
@@ -53,7 +98,9 @@ function eventWithCurrentTarget(type: string, currentTarget: EventTarget): Event
 }
 
 afterEach(() => {
+  document.body.replaceChildren();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe("ActivityRail", () => {
@@ -149,7 +196,9 @@ describe("ActivityRail", () => {
       expect(text).toContain("@keydown=");
     });
 
-    // The Node test environment has no DOM, so inspect only the compact drawer's stable event wiring.
+    // TemplateResult handler extraction is proportionate here: this pins only the
+    // backdrop's target check, and a DOM mousedown would not distinguish the
+    // backdrop itself from a descendant any more directly.
     it("closes only when the compact drawer backdrop itself is pressed", () => {
       const rail = createCompactRail();
       const onCloseCompact = vi.fn();
@@ -484,6 +533,132 @@ describe("ActivityRail", () => {
       const onRailOrderChange = vi.fn();
       rail.onRailOrderChange = onRailOrderChange;
       expect(rail.onRailOrderChange).toBe(onRailOrderChange);
+    });
+  });
+
+  describe("fixed reload control", () => {
+    it("renders no reload control while showReload is false", async () => {
+      const rail = await mountRail((instance) => { instance.showReload = false; });
+
+      expect(rail.shadowRoot?.querySelectorAll(".rail-reload-button")).toHaveLength(0);
+      expect(rail.shadowRoot?.querySelector("button[aria-label='Full page reload']")).toBeNull();
+    });
+
+    it("renders one fixed reload control while showReload is true", async () => {
+      const rail = await mountRail((instance) => { instance.showReload = true; });
+
+      const reload = reloadButton(rail);
+      expect(rail.shadowRoot?.querySelectorAll(".rail-reload-button")).toHaveLength(1);
+      expect(reload.classList).toContain("icon-button");
+      expect(reload.type).toBe("button");
+      expect(reload.getAttribute("title")).toBe("Full page reload");
+      expect(reload.getAttribute("aria-label")).toBe("Full page reload");
+      const icon = reload.querySelector("svg");
+      if (icon === null) throw new Error("Expected the reload icon");
+      expect(icon.getAttribute("aria-hidden")).toBe("true");
+      expect(icon.getAttribute("focusable")).toBe("false");
+    });
+
+    it("keeps reload in one fixed slot between the spacer and settings", async () => {
+      const rail = await mountRail((instance) => { instance.showReload = true; });
+
+      expect(railRoot(rail).querySelector(".rail-spacer")?.nextElementSibling).toBe(reloadButton(rail));
+      expect(reloadButton(rail).nextElementSibling).toBe(railRoot(rail).querySelector(".settings-button"));
+
+      rail.railOrder = ["info", "history", "git-update-manager", "terminal", "theme", "system-prompt"];
+      await rail.updateComplete;
+
+      expect(railRoot(rail).querySelector(".rail-spacer")?.nextElementSibling).toBe(reloadButton(rail));
+      expect(reloadButton(rail).nextElementSibling).toBe(railRoot(rail).querySelector(".settings-button"));
+    });
+
+    it("keeps reload in the fixed slot with and without plugin controls", async () => {
+      const rail = await mountRail((instance) => {
+        instance.showReload = true;
+        instance.pluginItems = pluginItems();
+      });
+
+      expect(reloadButton(rail).previousElementSibling?.className).toBe("rail-spacer");
+      expect(rail.shadowRoot?.querySelectorAll(".rail-plugin-separator")).toHaveLength(1);
+
+      rail.pluginItems = [];
+      await rail.updateComplete;
+
+      expect(railRoot(rail).querySelector(".rail-spacer")?.nextElementSibling).toBe(reloadButton(rail));
+      expect(reloadButton(rail).nextElementSibling).toBe(railRoot(rail).querySelector(".settings-button"));
+    });
+
+    it("renders reload in the compact drawer using the same fixed slot", async () => {
+      vi.stubGlobal("matchMedia", () => mediaQueryList(false));
+      const rail = await mountRail((instance) => {
+        instance.showReload = true;
+        instance.compactOpen = true;
+      });
+
+      expect(rail.shadowRoot?.querySelectorAll(".rail-reload-button")).toHaveLength(1);
+      expect(railRoot(rail).querySelector(".rail-spacer")?.nextElementSibling).toBe(reloadButton(rail));
+      expect(reloadButton(rail).nextElementSibling).toBe(railRoot(rail).querySelector(".settings-button"));
+    });
+
+    it("excludes reload from ordering attributes, drag metadata, and railOrder", async () => {
+      const rail = await mountRail((instance) => { instance.showReload = true; });
+      const reload = reloadButton(rail);
+
+      expect(reload.hasAttribute("data-rail-item")).toBe(false);
+      expect(reload.hasAttribute("draggable")).toBe(false);
+      expect(reload.draggable).toBe(false);
+      expect(rail.railOrder).not.toContain("reload");
+      expect(rail.railOrder).toHaveLength(6);
+    });
+
+    it("invokes onReload once when the reload control is clicked", async () => {
+      const onReload = vi.fn();
+      const rail = await mountRail((instance) => {
+        instance.showReload = true;
+        instance.onReload = onReload;
+      });
+
+      reloadButton(rail).click();
+
+      expect(onReload).toHaveBeenCalledOnce();
+    });
+
+    it("closes the compact drawer before reloading", async () => {
+      vi.stubGlobal("matchMedia", () => mediaQueryList(false));
+      const calls: string[] = [];
+      const rail = await mountRail((instance) => {
+        instance.showReload = true;
+        instance.compactOpen = true;
+        instance.onCloseCompact = () => { calls.push("close"); };
+        instance.onReload = () => { calls.push("reload"); };
+      });
+
+      reloadButton(rail).click();
+
+      expect(calls).toEqual(["close", "reload"]);
+    });
+
+    it("is safe to click when no onReload callback is provided", async () => {
+      const rail = await mountRail((instance) => { instance.showReload = true; });
+
+      expect(() => { reloadButton(rail).click(); }).not.toThrow();
+    });
+
+    it("cannot be dragged or dropped into rail order", async () => {
+      const onRailOrderChange = vi.fn();
+      const rail = await mountRail((instance) => {
+        instance.showReload = true;
+        instance.onRailOrderChange = onRailOrderChange;
+      });
+      const reload = reloadButton(rail);
+
+      reload.dispatchEvent(new Event("dragstart", { bubbles: true }));
+      const infoButton = railRoot(rail).querySelector(".info-button");
+      if (infoButton === null) throw new Error("Expected the info rail button");
+      infoButton.dispatchEvent(new Event("drop", { bubbles: true, cancelable: true }));
+
+      expect(onRailOrderChange).not.toHaveBeenCalled();
+      expect(rail.railOrder).toEqual(["terminal", "git-update-manager", "theme", "system-prompt", "history", "info"]);
     });
   });
 });

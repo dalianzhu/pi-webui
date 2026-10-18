@@ -1,5 +1,5 @@
 import type { ReactiveControllerHost } from "lit";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ACTIVITY_RAIL_DESKTOP_MEDIA_QUERY, AppShellController } from "./appShellController";
 
 class FakeMediaQueryListEvent extends Event {
@@ -94,5 +94,70 @@ describe("AppShellController", () => {
 
     expect(controller.isDesktopActivityRailLayout).toBe(true);
     expect(host.requestUpdate).not.toHaveBeenCalled();
+  });
+
+  describe("PWA refresh placement", () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    for (const width of [760, 761, 1180, 1181]) {
+      for (const pwa of [false, true]) {
+        it(`places refresh at ${String(width)}px with PWA=${String(pwa)}`, () => {
+          // Node's navigator has no iOS standalone flag, but stub it anyway so a
+          // changed host default cannot hide a breakpoint error.
+          vi.stubGlobal("navigator", {});
+          const controller = new AppShellController(new FakeHost(), {
+            mobileNavigationMedia: new FakeMediaQueryList(width <= 760),
+            activityRailDesktopMedia: new FakeMediaQueryList(width >= 1181),
+            pwaDisplayModeMedia: [new FakeMediaQueryList(pwa)],
+          });
+          expect(controller.shouldShowAppRefreshInRail()).toBe(pwa && width > 760);
+          expect(controller.shouldShowAppRefreshInContextBar()).toBe(pwa && width < 1181);
+          expect("shouldShowAppRefreshInHeader" in controller).toBe(false);
+        });
+      }
+    }
+
+    it("refreshes the placement predicates and removes every listener on layout changes", () => {
+      vi.stubGlobal("navigator", {});
+      const mobileNavigationMedia = new FakeMediaQueryList(false);
+      const activityRailDesktopMedia = new FakeMediaQueryList(true);
+      const pwaDisplayModeMedia = new FakeMediaQueryList(false);
+      const host = new FakeHost();
+      const controller = new AppShellController(host, {
+        mobileNavigationMedia,
+        activityRailDesktopMedia,
+        pwaDisplayModeMedia: [pwaDisplayModeMedia],
+      });
+
+      controller.hostConnected();
+      // Wide layout, not a PWA: no refresh control anywhere.
+      expect(controller.shouldShowAppRefreshInRail()).toBe(false);
+      expect(controller.shouldShowAppRefreshInContextBar()).toBe(false);
+
+      // Same width installed as a PWA: the persistent rail owns the control.
+      pwaDisplayModeMedia.dispatchChange(true);
+      expect(controller.shouldShowAppRefreshInRail()).toBe(true);
+      expect(controller.shouldShowAppRefreshInContextBar()).toBe(false);
+      expect(host.requestUpdate).toHaveBeenCalledTimes(1);
+
+      // 1180px: the stack layout shows the context bar; the drawer's rail keeps its action.
+      activityRailDesktopMedia.dispatchChange(false);
+      expect(controller.shouldShowAppRefreshInRail()).toBe(true);
+      expect(controller.shouldShowAppRefreshInContextBar()).toBe(true);
+      expect(host.requestUpdate).toHaveBeenCalledTimes(2);
+
+      // 760px: the context bar only.
+      mobileNavigationMedia.dispatchChange(true);
+      expect(controller.shouldShowAppRefreshInRail()).toBe(false);
+      expect(controller.shouldShowAppRefreshInContextBar()).toBe(true);
+      expect(host.requestUpdate).toHaveBeenCalledTimes(3);
+
+      controller.hostDisconnected();
+      expect(mobileNavigationMedia.listenerCount()).toBe(0);
+      expect(activityRailDesktopMedia.listenerCount()).toBe(0);
+      expect(pwaDisplayModeMedia.listenerCount()).toBe(0);
+    });
   });
 });

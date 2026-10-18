@@ -138,7 +138,6 @@ export class AppNavigationPanel extends LitElement {
           ></machine-switcher>
         ` : null}
         <div class="header-actions">
-          ${this.refreshControl}
           <button title="Show Actions" aria-label="Show Actions" @click=${() => { this.onShowActions?.(); }}>Actions</button>
         </div>
       </header>

@@ -34,6 +34,8 @@ export class ActivityRail extends LitElement {
   @property({ attribute: false }) onOpenPluginActivity?: (id: QualifiedContributionId, source: HTMLElement) => void;
   @property({ type: Boolean }) compactOpen = false;
   @property({ attribute: false }) onCloseCompact?: () => void;
+  @property({ attribute: false }) onReload?: () => void;
+  @property({ type: Boolean }) showReload = false;
 
   private desktopMedia: MediaQueryList | undefined;
   private dragItem: ReorderableRailItem | undefined;
@@ -87,6 +89,7 @@ export class ActivityRail extends LitElement {
   private readonly openHistory = (): void => { this.invokeCoreAction(this.onOpenHistory); };
   private readonly openInfo = (): void => { this.invokeCoreAction(this.onOpenInfo); };
   private readonly openSettings = (): void => { this.invokeCoreAction(this.onOpenSettings); };
+  private readonly reloadApp = (): void => { this.invokeCoreAction(this.onReload); };
 
   private readonly openPluginActivity = (id: QualifiedContributionId, source: EventTarget | null): void => {
     this.closeCompactBeforeAction();
@@ -362,6 +365,27 @@ export class ActivityRail extends LitElement {
     `;
   }
 
+  private renderReloadButton(): TemplateResult {
+    return html`
+      <button
+        type="button"
+        class="icon-button rail-reload-button"
+        title="Full page reload"
+        aria-label="Full page reload"
+        @click=${this.reloadApp}
+      >
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+             aria-hidden="true" focusable="false">
+          <path d="M20 6v5h-5"/>
+          <path d="M4 18v-5h5"/>
+          <path d="M18.2 9A7 7 0 0 0 6.1 6.8L4 9"/>
+          <path d="M5.8 15a7 7 0 0 0 12.1 2.2L20 15"/>
+        </svg>
+      </button>
+    `;
+  }
+
   private renderSettingsButton(): TemplateResult {
     return html`
       <button
@@ -410,6 +434,7 @@ export class ActivityRail extends LitElement {
         ${this.pluginItems.map((item) => this.renderPluginButton(item))}
       `}
       <div class="rail-spacer"></div>
+      ${this.showReload ? this.renderReloadButton() : nothing}
       ${this.renderSettingsButton()}
     `;
   }
