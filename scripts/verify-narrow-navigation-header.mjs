@@ -994,6 +994,16 @@ async function runScenarios({ cdp, fixtureUrl, state }) {
     await runReloadActivation(cdp, state, count);
   });
 
+  const guardProbe = await callFixture(cdp, "probeApiGuard");
+  check("FIXTURE_RUNTIME", { stage: "api-guard-self-check" }, () => {
+    assert.equal(guardProbe.recorded.length, 1, `the XMLHttpRequest guard did not record exactly one application request: ${JSON.stringify(guardProbe)}`);
+    assert.match(guardProbe.recorded[0], /^xhr .*\/api\//, `the XMLHttpRequest guard did not record the application request as an xhr entry: ${JSON.stringify(guardProbe.recorded)}`);
+    assert.equal(guardProbe.blocked, true, `the XMLHttpRequest guard did not block the application request: ${JSON.stringify(guardProbe)}`);
+    assert.equal(guardProbe.passThroughBlocked, false, `the XMLHttpRequest guard blocked a non-application request: ${JSON.stringify(guardProbe)}`);
+    assert.deepEqual(guardProbe.passThroughRecorded, [], `the XMLHttpRequest guard recorded a non-application request: ${JSON.stringify(guardProbe.passThroughRecorded)}`);
+    assert.equal(guardProbe.remainingCount, guardProbe.baseline, "the guard self-check disturbed the recorded application-request list");
+  });
+
   const violations = await callFixture(cdp, "readApiViolations");
   check("FIXTURE_RUNTIME", { stage: "api-guard" }, () => {
     assert.deepEqual(violations, [], `the fixture made unexpected application network requests: ${JSON.stringify(violations)}`);
@@ -1015,6 +1025,12 @@ async function assertFixtureEnvironment(cdp) {
     assert.equal(info.themeId, "themes:pi-webui-dark", "the pi-webui-dark theme contribution must be applied");
     assert.deepEqual(info.missingThemeTokens, [], `theme tokens missing from the document root: ${JSON.stringify(info.missingThemeTokens)}`);
     assert.deepEqual(info.mismatchedThemeTokens, [], `theme token values disagree with the pi-webui-dark contribution: ${JSON.stringify(info.mismatchedThemeTokens)}`);
+  });
+  const contract = await callFixture(cdp, "readFixtureContract");
+  check("FIXTURE_RUNTIME", { stage: "fixture-contract" }, () => {
+    assert.equal(contract.hasApp, true, "window.__narrowHeaderFixture.app must expose the mounted PiWebUiApp element");
+    assert.equal(contract.appIsProductionElement, true, "window.__narrowHeaderFixture.app must be the production PiWebUiApp element");
+    assert.equal(contract.labelText, contract.requestedName, `setMachine resolved before the new machine name rendered: ${JSON.stringify(contract)}`);
   });
 }
 
@@ -1852,10 +1868,71 @@ function installNetworkGuards() {
       super(url, protocols);
     }
   };
+  // The repository has a real XHR path (src/client/src/api/workspaceUploads.ts), so
+  // fetch/WebSocket guards alone would let an application request reach the fixture
+  // Vite server. A blocked request is left in UNSENT, which makes its send() throw.
+  const blockedXhrRequests = new WeakSet();
+  const xhrPrototype = window.XMLHttpRequest.prototype;
+  const originalXhrOpen = xhrPrototype.open;
+  const originalXhrSend = xhrPrototype.send;
+  xhrPrototype.open = function (method, url) {
+    if (isAppRequest(String(url))) {
+      apiViolations.push("xhr " + String(method) + " " + String(url));
+      blockedXhrRequests.add(this);
+      return undefined;
+    }
+    return originalXhrOpen.apply(this, arguments);
+  };
+  xhrPrototype.send = function () {
+    if (blockedXhrRequests.has(this)) {
+      throw new Error("Unexpected application XMLHttpRequest in the narrow-header fixture");
+    }
+    return originalXhrSend.apply(this, arguments);
+  };
 }
 
 function isAppRequest(url) {
   return url.indexOf("/api/") !== -1 || url.indexOf("pi-webui-plugins") !== -1;
+}
+
+// Self-check for the XHR guard: an injected application request must be recorded and
+// left blocked, a non-application request must pass through untouched. Only the probe's
+// own synthetic entries are removed so the final apiViolations assertion keeps failing
+// the run for every genuine application request.
+function probeApiGuard() {
+  const baseline = apiViolations.length;
+  let blocked = false;
+  let blockerMessage = "";
+  try {
+    const blockedRequest = new XMLHttpRequest();
+    blockedRequest.open("GET", "/api/narrow-header-guard-probe");
+    blockedRequest.send();
+  } catch (error) {
+    blocked = true;
+    blockerMessage = String(error !== null && error !== undefined && error.message !== undefined ? error.message : error);
+  }
+  const recorded = apiViolations.splice(baseline);
+  let passThroughBlocked = false;
+  let passThroughMessage = "";
+  try {
+    const passThroughRequest = new XMLHttpRequest();
+    passThroughRequest.open("GET", "/src/theme.ts");
+    passThroughRequest.abort();
+  } catch (error) {
+    passThroughBlocked = true;
+    passThroughMessage = String(error !== null && error !== undefined && error.message !== undefined ? error.message : error);
+  }
+  const passThroughRecorded = apiViolations.splice(baseline);
+  return {
+    baseline: baseline,
+    recorded: recorded,
+    blocked: blocked,
+    blockerMessage: blockerMessage,
+    passThroughBlocked: passThroughBlocked,
+    passThroughMessage: passThroughMessage,
+    passThroughRecorded: passThroughRecorded,
+    remainingCount: apiViolations.length,
+  };
 }
 
 function buildMachines() {
@@ -2232,6 +2309,24 @@ function focusTrigger() {
   const parts = navParts();
   parts.button.focus();
   return { deepActiveIsTrigger: deepActiveElement() === parts.button };
+}
+
+// Self-check for the fixture contract: app must expose the mounted PiWebUiApp element
+// and setMachine must resolve only after the new machine state has rendered.
+async function readFixtureContract() {
+  const exposedApp = window.__narrowHeaderFixture.app;
+  const change = await window.__narrowHeaderFixture.setMachine({ name: "long", status: "offline", activity: "none" });
+  if (change.ok !== true) throw harnessError(typeof change.category === "string" ? change.category : "FIXTURE_RUNTIME", "fixture.setMachine failed: " + String(change.message));
+  const parts = navParts();
+  const contract = {
+    hasApp: exposedApp !== null && exposedApp !== undefined && exposedApp === appElement(),
+    appIsProductionElement: exposedApp instanceof PiWebUiApp,
+    requestedName: LONG_NAME,
+    labelText: parts.label.textContent === null ? "" : parts.label.textContent,
+  };
+  const restore = await window.__narrowHeaderFixture.setMachine({ name: "short", status: "online", activity: "none" });
+  if (restore.ok !== true) throw harnessError(typeof restore.category === "string" ? restore.category : "FIXTURE_RUNTIME", "fixture.setMachine restore failed: " + String(restore.message));
+  return contract;
 }
 
 function closeMenu() {
@@ -2668,6 +2763,7 @@ async function boot() {
 window.__narrowHeaderFixture = {
   ready: false,
   bootError: null,
+  get app() { return document.querySelector(FIXTURE_APP_TAG); },
   info: function () { return guarded(info); },
   instanceId: function () { return guarded(function () { return window.__harnessInstanceId; }); },
   applyCase: function (spec) { return guarded(function () { return applyCase(spec); }); },
@@ -2679,8 +2775,13 @@ window.__narrowHeaderFixture = {
     return guarded(function () { return applyCase({ width: width, name: "short", status: "online", activity: "none" }); });
   },
   setMachine: function (spec) {
-    return guarded(function () { applyMachine(spec.name, spec.status, spec.activity); return true; });
+    return guarded(async function () {
+      applyMachine(spec.name, spec.status, spec.activity);
+      await settleApp();
+      return true;
+    });
   },
+  readFixtureContract: function () { return guarded(readFixtureContract); },
   measure: function () { return guarded(snapshot); },
   readRefresh: function () { return guarded(function () { return refreshState(); }); },
   readActivation: function () { return guarded(readActivation); },
@@ -2699,6 +2800,7 @@ window.__narrowHeaderFixture = {
   resetReloadCount: function () { return guarded(resetReloadCount); },
   readReloadCount: function () { return guarded(readReloadCount); },
   readApiViolations: function () { return guarded(function () { return apiViolations.slice(); }); },
+  probeApiGuard: function () { return guarded(probeApiGuard); },
 };
 
 try {
