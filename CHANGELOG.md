@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.26.2
+
+### Patch Changes
+
+- badf4b0: Show known HTTP status codes on failed model responses and preserve them in saved session history.
+
 ## 1.26.1
 
 ### Patch Changes
