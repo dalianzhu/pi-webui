@@ -58,8 +58,49 @@ describe("chat message normalization", () => {
   });
 
   it("shows assistant model errors as system chat messages", () => {
-    expect(normalizeMessage({ role: "assistant", content: [], stopReason: "error", errorMessage: "429 rate limit", timestamp: "2026-05-09T12:00:00.000Z", provider: "openai", model: "gpt-4.1" })).toEqual([
-      { role: "system", parts: [{ type: "text", text: "Model response failed: 429 rate limit" }], meta: { timestamp: "2026-05-09T12:00:00.000Z", model: { provider: "openai", id: "gpt-4.1" } } },
+    expect(normalizeMessage({ role: "assistant", content: [], stopReason: "error", errorMessage: "rate limit", timestamp: "2026-05-09T12:00:00.000Z", provider: "openai", model: "gpt-4.1", piWebUiHttpStatus: 429 })).toEqual([
+      { role: "system", parts: [{ type: "text", text: "Model response failed (HTTP 429): rate limit" }], meta: { timestamp: "2026-05-09T12:00:00.000Z", model: { provider: "openai", id: "gpt-4.1" } } },
+    ]);
+  });
+
+  it("keeps partial assistant content and formats coded historical errors with metadata", () => {
+    const message = {
+      role: "assistant",
+      content: [{ type: "text", text: "partial answer" }],
+      stopReason: "error",
+      errorMessage: "Rate limit exceeded.",
+      piWebUiHttpStatus: 429,
+      timestamp: "2026-05-09T12:00:00.000Z",
+      provider: "openai",
+      model: "gpt-4.1",
+    };
+
+    expect(normalizeMessage(message)).toEqual([
+      { ...textMessage("assistant", "partial answer"), meta: { timestamp: "2026-05-09T12:00:00.000Z", model: { provider: "openai", id: "gpt-4.1" } } },
+      { role: "system", parts: [{ type: "text", text: "Model response failed (HTTP 429): Rate limit exceeded." }], meta: { timestamp: "2026-05-09T12:00:00.000Z", model: { provider: "openai", id: "gpt-4.1" } } },
+    ]);
+  });
+
+  it.each([
+    { piWebUiHttpStatus: 200 },
+    { piWebUiHttpStatus: 600 },
+    { piWebUiHttpStatus: "429" },
+    { piWebUiHttpStatus: 429.5 },
+  ])("falls back to uncoded formatting for malformed or non-error status %#", (metadata) => {
+    expect(normalizeMessage({ role: "assistant", content: [], stopReason: "error", errorMessage: "terminated", ...metadata })).toEqual([
+      textMessage("system", "Model response failed: terminated"),
+    ]);
+  });
+
+  it("preserves uncoded terminated model errors", () => {
+    expect(normalizeMessage({ role: "assistant", content: [], stopReason: "error", errorMessage: "terminated" })).toEqual([
+      textMessage("system", "Model response failed: terminated"),
+    ]);
+  });
+
+  it("does not duplicate a status already present in provider text", () => {
+    expect(normalizeMessage({ role: "assistant", content: [], stopReason: "error", errorMessage: "HTTP 429: rate limit", piWebUiHttpStatus: 429 })).toEqual([
+      textMessage("system", "Model response failed: HTTP 429: rate limit"),
     ]);
   });
 

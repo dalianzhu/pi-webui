@@ -1,11 +1,47 @@
 import { describe, expect, it } from "vitest";
-import { mergeChatHistory, type RawMessagePage } from "./chatHistoryCache";
+import { mergeChatHistory, readChatHistoryCache, type RawMessagePage, writeChatHistoryCache } from "./chatHistoryCache";
 
 function page(start: number, total: number, messages: unknown[]): RawMessagePage {
   return { start, total, messages };
 }
 
 describe("mergeChatHistory", () => {
+  it("round-trips coded raw assistant errors through session storage", () => {
+    const previousStorage = Object.getOwnPropertyDescriptor(globalThis, "sessionStorage");
+    const values = new Map<string, string>();
+    const storage = {
+      getItem(key: string): string | null {
+        return values.get(key) ?? null;
+      },
+      setItem(key: string, value: string): void {
+        values.set(key, value);
+      },
+      removeItem(key: string): void {
+        values.delete(key);
+      },
+    };
+    const message = {
+      role: "assistant",
+      content: [{ type: "text", text: "partial answer" }],
+      stopReason: "error",
+      errorMessage: "Rate limit exceeded.",
+      piWebUiHttpStatus: 429,
+    };
+    const cachedPage = page(0, 1, [message]);
+
+    try {
+      Object.defineProperty(globalThis, "sessionStorage", { configurable: true, value: storage });
+      writeChatHistoryCache("session-cache", cachedPage);
+      const restored = readChatHistoryCache("session-cache");
+      expect(restored).toEqual(cachedPage);
+      expect(restored?.messages[0]).toEqual(message);
+      expect(restored?.messages[0]).toHaveProperty("piWebUiHttpStatus", 429);
+    } finally {
+      if (previousStorage === undefined) Reflect.deleteProperty(globalThis, "sessionStorage");
+      else Object.defineProperty(globalThis, "sessionStorage", previousStorage);
+    }
+  });
+
   it("merges adjacent cached and incoming pages", () => {
     const merged = mergeChatHistory(page(2, 5, ["c", "d", "e"]), page(0, 5, ["a", "b"]));
 

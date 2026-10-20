@@ -1,3 +1,4 @@
+import { formatAssistantModelError } from "./modelErrorText";
 import type { ChatLine, ChatPart, ToolExecutionPart, ToolPreview } from "./components/shared";
 
 export function normalizeMessages(messages: unknown[]): ChatLine[] {
@@ -68,10 +69,8 @@ export function normalizeMessage(message: unknown): ChatLine[] {
 }
 
 function assistantErrorLine(message: unknown): ChatLine | undefined {
-  if (getString(message, "role") !== "assistant" || getString(message, "stopReason") !== "error") return undefined;
-  const errorMessage = getString(message, "errorMessage")?.trim();
-  const detail = errorMessage === undefined || errorMessage === "" ? "The model returned an error." : errorMessage;
-  return textMessage("system", `Model response failed: ${detail}`);
+  const text = formatAssistantModelError(message);
+  return text === undefined ? undefined : textMessage("system", text);
 }
 
 function isChatLine(message: unknown): message is ChatLine {

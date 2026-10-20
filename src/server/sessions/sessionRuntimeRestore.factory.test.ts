@@ -9,6 +9,7 @@ import {
   createDefaultRuntimeFactory,
   type SessionRuntimeRestore,
 } from "./piSessionService.js";
+import { withModelHttpErrorStatusRuntime } from "./modelHttpErrorStream.js";
 import {
   createTestModelRuntime,
   fakeAgentSessionServices,
@@ -100,6 +101,19 @@ describe("createDefaultRuntimeFactory restore hook", () => {
       sessionManager,
       modelRuntime: testModelRuntime,
     });
+  });
+
+  it("passes a decorated runtime to SDK services but the original to restore", async () => {
+    const prepare = vi.fn<SessionRuntimeRestore["prepare"]>(() => Promise.resolve({}));
+    const { factory, createServices } = factoryHarness({ prepare });
+
+    await invokeFactory(factory);
+
+    const servicesRuntime = createServices.mock.calls[0]?.[0].modelRuntime;
+    expect(servicesRuntime).toBe(withModelHttpErrorStatusRuntime(testModelRuntime));
+    expect(prepare).toHaveBeenCalledWith(expect.objectContaining({
+      modelRuntime: testModelRuntime,
+    }));
   });
 
   it("awaits prepare after createServices and before createFromServices", async () => {
