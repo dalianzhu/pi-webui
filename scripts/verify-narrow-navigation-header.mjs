@@ -364,6 +364,7 @@ async function runParent(args) {
     warnings: [],
     instanceId: undefined,
     overlay: options.overlayRoot,
+    apiProbe: process.env["PI_WEBUI_NARROW_HEADER_API_PROBE"],
   };
 
   const deadline = setTimeout(() => {
@@ -396,6 +397,7 @@ async function runParent(args) {
     const fixtureUrl = `http://127.0.0.1:${String(server.port)}${FIXTURE_ROUTE}`;
     await navigate(cdp, fixtureUrl);
     await waitForFixture(cdp);
+    await injectUnexpectedApiRequest(cdp, state, "before-reload");
     if (options.overlayRoot !== undefined) {
       const overlay = await queryOverlayStatus(state);
       const applied = Array.isArray(overlay.applied) ? overlay.applied : [];
@@ -1719,6 +1721,29 @@ async function runRefreshPlacement(cdp, fixtureUrlIgnored, state, count) {
 
 // -- Reload activation through application wiring ---------------------------
 
+// Opt-in negative controls must leave a genuine violation for the final assertion,
+// even when a later reload replaces the document. Each run injects exactly once.
+async function injectUnexpectedApiRequest(cdp, state, stage) {
+  if (state.apiProbe !== stage) return;
+  state.apiProbe = undefined;
+  const path = `/api/narrow-header-${stage}-probe`;
+  const result = await evaluate(cdp, `(async () => {
+    let blocked = false;
+    try {
+      const request = new XMLHttpRequest();
+      request.open("GET", ${JSON.stringify(path)});
+      request.send();
+    } catch { blocked = true; }
+    const violations = await window.__narrowHeaderFixture.readApiViolations();
+    return { blocked, recorded: violations.value };
+  })()`);
+  check("FIXTURE_RUNTIME", { stage, probe: "unexpected-api-request" }, () => {
+    assert.equal(result.blocked, true, "the unexpected-request probe must be blocked");
+    assert.ok(result.recorded.includes(`xhr GET ${path}`), `the unexpected-request probe was not recorded: ${JSON.stringify(result.recorded)}`);
+  });
+  console.log(`Injected one-shot ${stage} API probe: ${JSON.stringify(result.recorded)}`);
+}
+
 async function runReloadActivation(cdp, state, count) {
   const cases = [
     { name: "desktop-rail", viewport: 1600, surface: "rail" },
@@ -1728,6 +1753,7 @@ async function runReloadActivation(cdp, state, count) {
   ];
 
   for (const testCase of cases) {
+    if (testCase !== cases[0]) await injectUnexpectedApiRequest(cdp, state, "between-reloads");
     await setViewport(cdp, testCase.viewport, DESKTOP_VIEWPORT.height);
     await callFixture(cdp, "mountApp", { width: 324, pwa: true, name: "short", status: "online", activity: "none" });
     const before = await callFixture(cdp, "instanceId");
@@ -1817,6 +1843,7 @@ import { applyPiWebUiTheme, THEME_TOKENS } from "/src/theme.ts";
 const PANEL_STORAGE_KEY = "pi-webui:panel-sizes:v1";
 const RELOAD_COUNT_KEY = "pi-webui:narrow-header-reload-count";
 const PWA_KEY = "pi-webui:narrow-header-pwa";
+const API_VIOLATIONS_KEY = "pi-webui:narrow-header-api-violations";
 const GENERATED_AT = "2026-10-17T00:00:00.000Z";
 const SHORT_NAME = "Local";
 const LONG_NAME = "build-server-02.internal.example";
@@ -1825,7 +1852,9 @@ const NAME_LOOKUP = { short: SHORT_NAME, long: LONG_NAME };
 const STATUS_WORDS = ["online", "offline", "error", "unknown"];
 
 const canvasContext = document.createElement("canvas").getContext("2d");
-const apiViolations = [];
+// Each run starts a fresh Chromium profile. Reuse this tab's log across real reloads.
+const apiViolations = JSON.parse(window.sessionStorage.getItem(API_VIOLATIONS_KEY) ?? "[]");
+persistApiViolations();
 const standaloneSwitchers = [];
 const FIXTURE_APP_TAG = "pi-webui-app-fixture";
 let FixtureAppElement = null;
@@ -1847,12 +1876,21 @@ function must(value, what) {
   return value;
 }
 
+function persistApiViolations() {
+  window.sessionStorage.setItem(API_VIOLATIONS_KEY, JSON.stringify(apiViolations));
+}
+
+function recordApiViolation(violation) {
+  apiViolations.push(violation);
+  persistApiViolations();
+}
+
 function installNetworkGuards() {
   const originalFetch = window.fetch.bind(window);
   window.fetch = function (input, init) {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : String(input && input.url);
     if (isAppRequest(url)) {
-      apiViolations.push("fetch " + url);
+      recordApiViolation("fetch " + url);
       return Promise.reject(new Error("Unexpected application request in the narrow-header fixture: " + url));
     }
     return originalFetch(input, init);
@@ -1861,7 +1899,7 @@ function installNetworkGuards() {
   window.WebSocket = class GuardedWebSocket extends OriginalWebSocket {
     constructor(url, protocols) {
       if (isAppRequest(String(url))) {
-        apiViolations.push("websocket " + String(url) + "\n" + String(new Error("trace").stack));
+        recordApiViolation("websocket " + String(url) + "\n" + String(new Error("trace").stack));
         window.__harnessErrors.push(String(new Error("ws-trace").stack));
         throw new Error("Unexpected application WebSocket in the narrow-header fixture: " + String(url));
       }
@@ -1877,7 +1915,7 @@ function installNetworkGuards() {
   const originalXhrSend = xhrPrototype.send;
   xhrPrototype.open = function (method, url) {
     if (isAppRequest(String(url))) {
-      apiViolations.push("xhr " + String(method) + " " + String(url));
+      recordApiViolation("xhr " + String(method) + " " + String(url));
       blockedXhrRequests.add(this);
       return undefined;
     }
@@ -1923,6 +1961,7 @@ function probeApiGuard() {
     passThroughMessage = String(error !== null && error !== undefined && error.message !== undefined ? error.message : error);
   }
   const passThroughRecorded = apiViolations.splice(baseline);
+  persistApiViolations();
   return {
     baseline: baseline,
     recorded: recorded,
