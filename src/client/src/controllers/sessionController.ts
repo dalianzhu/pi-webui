@@ -106,6 +106,7 @@ export interface SessionControllerDependencies {
   onStarterModelPolicyConfirmed?: (event: StarterModelPolicyConfirmedEvent) => void;
   onStarterModelPolicySubstitution?: (event: StarterModelPolicySubstitutionEvent) => void;
   refreshProjectSessionCatalog?: () => void | Promise<void>;
+  refreshSessionLists?: (cwds?: readonly string[], machineId?: string) => Promise<void>;
 }
 
 interface BulkSessionMutationResult {
@@ -241,6 +242,7 @@ export class SessionController {
   private readonly onStarterModelPolicyConfirmed: SessionControllerDependencies["onStarterModelPolicyConfirmed"];
   private readonly onStarterModelPolicySubstitution: SessionControllerDependencies["onStarterModelPolicySubstitution"];
   private readonly refreshProjectSessionCatalog: NonNullable<SessionControllerDependencies["refreshProjectSessionCatalog"]>;
+  private readonly refreshSessionLists: SessionControllerDependencies["refreshSessionLists"];
   private selectionSeq = 0;
   /**
    * Event-stream watermark the selected session's extension entries were read at.
@@ -316,6 +318,9 @@ export class SessionController {
   // stale and must be re-read.
   private modelPolicyConfirmedStatus: ClientSessionModelPolicyStatus | undefined;
   private readonly pendingSessionStarts = new Map<string, PendingSessionStart>();
+  // Persistence is monotonic for a machine/session identity, even when the UI
+  // changes project or a creation HTTP response arrives after its WS status.
+  private readonly persistedSessionIdentities = new Set<string>();
   private readonly starterModelPolicySubstitutionChecks = new Map<string, StarterPolicySubstitutionCheck>();
   private readonly suppressedCreatedSessions = new Map<string, SuppressedCreatedSession>();
   private readonly selectedSessionRefreshes = new TrailingRefreshCoordinator<string>();
@@ -349,6 +354,7 @@ export class SessionController {
     this.onStarterModelPolicyConfirmed = deps.onStarterModelPolicyConfirmed;
     this.onStarterModelPolicySubstitution = deps.onStarterModelPolicySubstitution;
     this.refreshProjectSessionCatalog = deps.refreshProjectSessionCatalog ?? (() => undefined);
+    this.refreshSessionLists = deps.refreshSessionLists;
   }
 
   applyGlobalEvent(event: GlobalSessionEvent): void {
@@ -510,6 +516,7 @@ export class SessionController {
   }
 
   async selectSession(session: SessionInfo, options?: { updateUrl?: boolean | undefined; preserveTreeDialog?: boolean | undefined; propagateRefreshError?: boolean | undefined }) {
+    if (session.persisted === true) this.confirmSessionPersisted(session.id, selectedMachineId(this.getState()));
     if (this.disposed) return;
     if (isClientPendingStartSessionInfo(session)) {
       this.selectClientPendingStartSession(session, options);
@@ -775,7 +782,7 @@ export class SessionController {
       } else {
         await this.api.prompt(session, text, streamingBehavior, machineId, attachments);
       }
-      this.markCachedNewSessionPersisted(session);
+      this.markCachedNewSessionPersisted(session, machineId);
       return true;
     } catch (error) {
       this.setState({ error: String(error) });
@@ -791,7 +798,7 @@ export class SessionController {
     }
     try {
       await this.api.shell(session, text, machineId);
-      this.markCachedNewSessionPersisted(session);
+      this.markCachedNewSessionPersisted(session, machineId);
       return true;
     } catch (error) {
       if (this.getState().selectedSession?.id === session.id) this.setState({ messages: [...this.getState().messages, textMessage("system", String(error))] });
@@ -810,9 +817,11 @@ export class SessionController {
     this.markSendingPrompt(session.id, true);
     try {
       const result = await this.api.runCommand(session, text, machineId);
-      if (options.applyResult && this.isSelectedSessionIdentity(session.id, machineId)) this.applyCommandResult(result);
+      if (options.applyResult && this.isSelectedSessionIdentity(session.id, machineId)) this.applyCommandResult(result, machineId);
+      else if (result.type === "done" && result.session !== undefined) this.revalidateSessionListsAfterCommit(result.session.cwd, machineId);
       else if (result.type === "select" || result.type === "tree") this.setState({ error: `Queued command “${text}” needs input; open the session and run it again.` });
-      this.markCachedNewSessionPersisted(session);
+      // A successful command may only open a dialog or show help. Persistence
+      // status, not command success, retires its still-unsent recovery cache.
       return true;
     } catch (error) {
       if (this.getState().selectedSession?.id === session.id) this.setState({ messages: [...this.getState().messages, textMessage("system", String(error))] });
@@ -835,8 +844,11 @@ export class SessionController {
     const session = this.getState().selectedSession;
     if (!session) return;
     this.setState({ commandDialog: undefined });
+    const machineId = selectedMachineId(this.getState());
     try {
-      this.applyCommandResult(await this.api.respondToCommand(session, requestId, value, selectedMachineId(this.getState())));
+      const result = await this.api.respondToCommand(session, requestId, value, machineId);
+      if (this.isSelectedSessionIdentity(session.id, machineId)) this.applyCommandResult(result, machineId);
+      else if (result.type === "done" && result.session !== undefined) this.revalidateSessionListsAfterCommit(result.session.cwd, machineId);
     } catch (error) {
       this.setState({ error: String(error) });
     }
@@ -905,12 +917,16 @@ export class SessionController {
     }
     if (result.cancelled) return;
 
-    const current = this.getState();
-    if (selectedMachineId(current) !== machineId) return;
-    const sessions = [result.session, ...current.sessions.filter((candidate) => candidate.id !== result.session.id)];
-    this.setState({ sessions });
-    if (!this.isCurrentSessionSelection(session.id, machineId, selectionSeq)) return;
-    await this.selectSession(result.session);
+    try {
+      const current = this.getState();
+      if (selectedMachineId(current) !== machineId || current.selectedWorkspace?.path !== result.session.cwd) return;
+      const sessions = [result.session, ...current.sessions.filter((candidate) => candidate.id !== result.session.id)];
+      this.setState({ sessions });
+      if (!this.isCurrentSessionSelection(session.id, machineId, selectionSeq)) return;
+      await this.selectSession(result.session);
+    } finally {
+      this.revalidateSessionListsAfterCommit(result.session.cwd, machineId);
+    }
   }
 
   private async refreshAfterTreeNavigation(
@@ -1131,26 +1147,46 @@ export class SessionController {
 
   async refreshCurrentWorkspaceSessions(machineId = selectedMachineId(this.getState())): Promise<void> {
     const workspace = this.getState().selectedWorkspace;
+    if (this.refreshSessionLists !== undefined) {
+      await this.refreshSessionLists(workspace === undefined ? [] : [workspace.path], machineId);
+      return;
+    }
     if (workspace === undefined) return;
     try {
-      const listedSessions = mergeCachedNewSessions(workspace.path, await this.api.sessions(workspace.path, machineId), machineId)
-        .filter((session) => !this.isSuppressedCreatedSession(session, machineId));
+      const sessions = await this.api.sessions(workspace.path, machineId);
       if (selectedMachineId(this.getState()) !== machineId || this.getState().selectedWorkspace?.id !== workspace.id) return;
-      const sessions = this.mergePendingStartSessions(workspace.path, listedSessions, machineId);
-      const selectedSession = this.getState().selectedSession;
-      this.setState({ sessions });
-      if (selectedSession === undefined) return;
-      const refreshedSelected = sessions.find((session) => session.id === selectedSession.id);
-      if (refreshedSelected !== undefined) {
-        if (refreshedSelected !== selectedSession) this.setState({ selectedSession: refreshedSelected });
-        return;
-      }
-      const next = sessions.find((session) => session.archived !== true) ?? sessions[0];
-      if (next !== undefined) await this.selectSession(next);
-      else this.deselectSession({ forgetRememberedSelection: true });
+      await this.applyRefreshedSessionLists([{ cwd: workspace.path, sessions }], machineId);
     } catch (error) {
       if (selectedMachineId(this.getState()) === machineId && this.getState().selectedWorkspace?.id === workspace.id) this.setState({ error: String(error) });
     }
+  }
+
+  /** Apply authoritative lists together, retaining only genuinely local pending starts. */
+  async applyRefreshedSessionLists(lists: readonly { cwd: string; sessions: SessionInfo[] }[], machineId: string): Promise<void> {
+    if (this.disposed || selectedMachineId(this.getState()) !== machineId) return;
+    for (const { sessions } of lists) {
+      for (const session of sessions) {
+        if (session.persisted === true) this.confirmSessionPersisted(session.id, machineId);
+      }
+    }
+    const byCwd = new Map(lists.map(({ cwd, sessions }) => [cwd, this.mergePendingStartSessions(cwd,
+      mergeCachedNewSessions(cwd, sessions, machineId).filter((session) => !this.isSuppressedCreatedSession(session, machineId)), machineId)]));
+    const state = this.getState();
+    const sessions = byCwd.get(state.selectedWorkspace?.path ?? "") ?? state.sessions;
+    this.setState({
+      sessions,
+      projectSessions: [...state.projectSessions.filter((session) => !byCwd.has(session.cwd)), ...[...byCwd.values()].flat()],
+    });
+    const selected = state.selectedSession;
+    if (selected === undefined || !byCwd.has(selected.cwd)) return;
+    const refreshed = byCwd.get(selected.cwd)?.find((session) => session.id === selected.id);
+    if (refreshed !== undefined) {
+      this.setState({ selectedSession: refreshed });
+      return;
+    }
+    const next = sessions.find((session) => session.archived !== true) ?? sessions[0];
+    if (next !== undefined) await this.selectSession(next);
+    else this.deselectSession({ forgetRememberedSelection: true });
   }
 
   async reorderSession(session: SessionInfo, input: SessionReorderRequest): Promise<void> {
@@ -2011,15 +2047,15 @@ export class SessionController {
     if (pending.request.kind === "plus") {
       this.captureStarterModelPolicySubstitution(session, pending.machineId, pending.request.initialModelPolicy);
     }
-    rememberCachedNewSession(session, pending.machineId);
+    const cachedSession = this.rememberStartedSession(session, pending.machineId);
     moveDraft(machineSessionKey(pending.machineId, tempId), machineSessionKey(pending.machineId, session.id));
     // The composer was scoped to the temporary id; without this move an unsent
     // attachment would disappear when `sessionId` becomes the real id.
     this.attachmentDrafts.move(machineSessionKey(pending.machineId, tempId), machineSessionKey(pending.machineId, session.id));
-    const cachedSession = markCachedNewSessionInfo(session, pending.machineId);
     if (!this.isCurrentPendingStart(pending)) {
       this.setState({ clientQueuedSessionMessages: omitKey(this.getState().clientQueuedSessionMessages, tempId) });
       await this.flushQueuedPendingSends(cachedSession, pending.machineId, queuedSends);
+      this.revalidateSessionListsAfterCommit(pending.cwd, pending.machineId);
       return false;
     }
 
@@ -2039,6 +2075,9 @@ export class SessionController {
       await this.selectSession(cachedSession, { updateUrl: false });
     }
     await this.flushQueuedPendingSends(cachedSession, pending.machineId, queuedSends);
+    // A mutation notification may have arrived before the original POST reply.
+    // Revalidate after replacing the pending row, not only on the earlier event.
+    this.revalidateSessionListsAfterCommit(pending.cwd, pending.machineId);
     return true;
   }
 
@@ -2110,29 +2149,60 @@ export class SessionController {
   }
 
   private async recreateCachedNewSession(session: SessionInfo, options?: { updateUrl?: boolean | undefined }): Promise<void> {
+    const machineId = selectedMachineId(this.getState());
     try {
-      const machineId = selectedMachineId(this.getState());
       const replacement = await this.api.startSession(session.cwd, machineId);
-      rememberCachedNewSession(replacement, machineId);
-      moveDraft(this.sessionCacheKey(session.id), this.sessionCacheKey(replacement.id));
-      this.attachmentDrafts.move(this.sessionCacheKey(session.id), this.sessionCacheKey(replacement.id));
-      forgetCachedNewSession(session.id, machineId);
-      const cachedReplacement = markCachedNewSessionInfo(replacement, machineId);
-      this.setState({ sessions: [cachedReplacement, ...this.getState().sessions.filter((candidate) => candidate.id !== session.id)], error: "" });
-      await this.selectSession(cachedReplacement, { updateUrl: false });
-      this.updateUrl(options?.updateUrl === false ? { replace: true } : undefined);
+      try {
+        const cachedReplacement = this.rememberStartedSession(replacement, machineId);
+        moveDraft(machineSessionKey(machineId, session.id), machineSessionKey(machineId, replacement.id));
+        this.attachmentDrafts.move(machineSessionKey(machineId, session.id), machineSessionKey(machineId, replacement.id));
+        forgetCachedNewSession(session.id, machineId);
+        const current = this.getState();
+        if (selectedMachineId(current) !== machineId || current.selectedWorkspace?.path !== replacement.cwd) return;
+        this.setState({ sessions: [cachedReplacement, ...current.sessions.filter((candidate) => candidate.id !== session.id)], error: "" });
+        if (!this.isSelectedSessionIdentity(session.id, machineId)) return;
+        await this.selectSession(cachedReplacement, { updateUrl: false });
+        if (this.isSelectedSessionIdentity(replacement.id, machineId)) this.updateUrl(options?.updateUrl === false ? { replace: true } : undefined);
+      } finally {
+        this.revalidateSessionListsAfterCommit(replacement.cwd, machineId);
+      }
     } catch (error) {
-      this.setState({ error: String(error) });
+      if (selectedMachineId(this.getState()) === machineId && this.getState().selectedWorkspace?.path === session.cwd) this.setState({ error: String(error) });
     }
   }
 
-  private markCachedNewSessionPersisted(session: SessionInfo): void {
-    if (!isCachedNewSessionInfo(session)) return;
-    const latest = this.getState().sessions.find((candidate) => candidate.id === session.id) ?? session;
-    this.replaceSession(stripCachedNewSessionMarker(latest));
+  private revalidateSessionListsAfterCommit(cwd: string, machineId: string): void {
+    // The mutation's broadcast can settle before its HTTP identity response.
+    // Reconcile after committing/selecting that identity, including a failed
+    // join, without blocking creation confirmation or model-policy writeback.
+    void this.refreshSessionLists?.([cwd], machineId);
   }
 
-  private applyCommandResult(result: CommandResult) {
+  private confirmSessionPersisted(sessionId: string, machineId: string): void {
+    this.persistedSessionIdentities.add(machineSessionKey(machineId, sessionId));
+    forgetCachedNewSession(sessionId, machineId);
+  }
+
+  private rememberStartedSession(session: SessionInfo, machineId: string): SessionInfo {
+    if (session.persisted === true) this.confirmSessionPersisted(session.id, machineId);
+    if (this.persistedSessionIdentities.has(machineSessionKey(machineId, session.id))) {
+      forgetCachedNewSession(session.id, machineId);
+      return { ...stripCachedNewSessionMarker(session), persisted: true };
+    }
+    rememberCachedNewSession(session, machineId);
+    return markCachedNewSessionInfo(session, machineId);
+  }
+
+  private markCachedNewSessionPersisted(session: SessionInfo, machineId: string): void {
+    // Acknowledged writes must retire the durable recovery record as well as
+    // its UI marker, or a later authoritative empty list can resurrect history.
+    forgetCachedNewSession(session.id, machineId);
+    if (selectedMachineId(this.getState()) !== machineId) return;
+    const latest = this.getState().sessions.find((candidate) => candidate.id === session.id) ?? session;
+    if (isCachedNewSessionInfo(latest)) this.replaceSession(stripCachedNewSessionMarker(latest));
+  }
+
+  private applyCommandResult(result: CommandResult, machineId: string) {
     if (result.type === "select") {
       this.setState({ commandDialog: result });
       return;
@@ -2148,11 +2218,14 @@ export class SessionController {
       const current = this.getState().selectedSession;
       const sessions = [result.session, ...this.getState().sessions.filter((session) => session.id !== result.session?.id)];
       this.setState({ sessions, selectedSession: current?.id === result.session.id ? result.session : current });
-      if (current?.id !== result.session.id) void this.selectSession(result.session);
+      const session = result.session;
+      const selection = current?.id !== session.id ? this.selectSession(session) : Promise.resolve();
+      void selection.finally(() => { this.revalidateSessionListsAfterCommit(session.cwd, machineId); });
     }
   }
 
   private applyCreatedSession(session: SessionInfo) {
+    if (session.persisted === true) this.confirmSessionPersisted(session.id, selectedMachineId(this.getState()));
     const state = this.getState();
     const belongsToSelectedProject = state.selectedWorkspace?.path === session.cwd || state.workspaces.some((workspace) => workspace.path === session.cwd);
     const projectSessions = belongsToSelectedProject ? prependOrReplaceSession(state.projectSessions, session) : state.projectSessions;
@@ -2189,10 +2262,15 @@ export class SessionController {
 
   private applyStatus(status: SessionStatus) {
     const state = this.getState();
+    // Cache identity is machine-scoped, not visible-project-scoped. Another
+    // client can persist a start after this browser has navigated away from it.
+    const machineId = selectedMachineId(state);
+    if (status.persisted === true) this.confirmSessionPersisted(status.sessionId, machineId);
+    else if (this.persistedSessionIdentities.has(machineSessionKey(machineId, status.sessionId))) status = { ...status, persisted: true };
     const clearsStaleActivity = state.sessionActivities[status.sessionId]?.phase === "active" && !isSessionActive(status);
     this.setState({
       sessionStatuses: { ...state.sessionStatuses, [status.sessionId]: status },
-      ...sessionMessageCountPatch(state, status.sessionId, status.messageCount),
+      ...sessionStatusListPatch(state, status),
       ...(clearsStaleActivity ? { sessionActivities: omitSessionActivity(state.sessionActivities, status.sessionId) } : {}),
       status: state.selectedSession?.id === status.sessionId ? status : state.status,
       activity: state.selectedSession?.id === status.sessionId && clearsStaleActivity ? undefined : state.activity,
@@ -2666,25 +2744,21 @@ function sessionOrderEntryKey(entry: SessionOrderReference): string {
   return JSON.stringify([entry.cwd, entry.id]);
 }
 
-function sessionMessageCountPatch(state: AppState, sessionId: string, messageCount: number | undefined): Pick<Partial<AppState>, "sessions" | "projectSessions" | "selectedSession"> {
-  if (messageCount === undefined) return {};
-
-  const sessionsChanged = state.sessions.some((session) => session.id === sessionId && session.messageCount !== messageCount);
-  const sessions = sessionsChanged
-    ? state.sessions.map((session) => session.id === sessionId ? { ...session, messageCount } : session)
-    : undefined;
-  const projectSessionsChanged = state.projectSessions.some((session) => session.id === sessionId && session.messageCount !== messageCount);
-  const projectSessions = projectSessionsChanged
-    ? state.projectSessions.map((session) => session.id === sessionId ? { ...session, messageCount } : session)
-    : undefined;
-  const selectedSession = state.selectedSession?.id === sessionId && state.selectedSession.messageCount !== messageCount
-    ? { ...state.selectedSession, messageCount }
-    : state.selectedSession;
-
+function sessionStatusListPatch(state: AppState, status: SessionStatus): Pick<Partial<AppState>, "sessions" | "projectSessions" | "selectedSession"> {
+  const changes = (session: SessionInfo) => session.id === status.sessionId && (
+    (status.messageCount !== undefined && session.messageCount !== status.messageCount)
+    || (status.persisted !== undefined && session.persisted !== status.persisted)
+    || (status.persisted === true && isCachedNewSessionInfo(session))
+  );
+  const update = (session: SessionInfo): SessionInfo => changes(session) ? {
+    ...(status.persisted === true ? stripCachedNewSessionMarker(session) : session),
+    ...(status.persisted === undefined ? {} : { persisted: status.persisted }),
+    ...(status.messageCount === undefined ? {} : { messageCount: status.messageCount }),
+  } : session;
   return {
-    ...(sessions === undefined ? {} : { sessions }),
-    ...(projectSessions === undefined ? {} : { projectSessions }),
-    ...(selectedSession !== state.selectedSession ? { selectedSession } : {}),
+    ...(state.sessions.some(changes) ? { sessions: state.sessions.map(update) } : {}),
+    ...(state.projectSessions.some(changes) ? { projectSessions: state.projectSessions.map(update) } : {}),
+    ...(state.selectedSession !== undefined && changes(state.selectedSession) ? { selectedSession: update(state.selectedSession) } : {}),
   };
 }
 

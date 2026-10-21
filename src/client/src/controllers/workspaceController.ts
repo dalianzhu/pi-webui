@@ -3,6 +3,7 @@ import { resetWorkspaceScopedState, type AppState } from "../appState";
 import { mergeCachedNewSessions } from "../cachedNewSessions";
 import { machineProjectKey } from "../machineKeys";
 import { CancellableLoadScope, isLoadCancellation } from "./cancellableLoadScope";
+import { TrailingRefreshCoordinator } from "./trailingRefreshCoordinator";
 import { selectedMachineId, type GetState, type RouteTarget, type SetState, type UpdateUrl } from "./types";
 import type {
   ProjectCatalogSnapshot,
@@ -32,6 +33,15 @@ interface CatalogFallbackSelection {
 
 interface CatalogFallbackFailure {
   error: unknown;
+}
+
+interface SessionListRefreshScope {
+  key: string;
+  request: number;
+  machineId: string;
+  project: Project;
+  workspace: Workspace;
+  cwds: Set<string>;
 }
 
 interface WorkspaceSelectionTarget {
@@ -78,18 +88,94 @@ export class WorkspaceController {
   private projectSessionsRequest = 0;
   private projectSelectionRequest = 0;
   private pendingProjectSelection: PendingProjectSelection | undefined;
+  private readonly sessionListRefreshes = new TrailingRefreshCoordinator<string>();
+  private readonly sessionListRevisions = new Map<string, number>();
+  private pendingSessionListRefresh: SessionListRefreshScope | undefined;
+  private disposed = false;
 
   constructor(
     private readonly getState: GetState,
     private readonly setState: SetState,
     private readonly updateUrl: UpdateUrl,
-    private readonly sessions: Pick<SessionController, "clearActiveSession" | "preferredSession" | "selectSession">,
+    private readonly sessions: Pick<SessionController, "clearActiveSession" | "preferredSession" | "selectSession" | "applyRefreshedSessionLists">,
     private readonly workspaceSelection: WorkspaceSelectionMemory = new InMemoryWorkspaceSelectionMemory(),
     deps: WorkspaceControllerDependencies = {},
   ) {
     this.api = deps.api ?? defaultApi;
     this.onBackgroundError = deps.onBackgroundError;
     this.onForgetProject = deps.onForgetProject;
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    this.projectSessionsRequest += 1;
+    this.selectionLoad.abort();
+    this.pendingSessionListRefresh = undefined;
+  }
+
+  /** Invalidation is scoped to the visible catalog, never a periodic project-wide scan. */
+  refreshSessionLists(cwds?: readonly string[], machineId = selectedMachineId(this.getState())): Promise<void> {
+    const state = this.getState();
+    const project = state.selectedProject;
+    const workspace = state.selectedWorkspace;
+    if (this.disposed || selectedMachineId(state) !== machineId || project === undefined || workspace === undefined) return Promise.resolve();
+    const relevant = this.relevantSessionCwds();
+    const affected = (cwds ?? [...relevant]).filter((cwd) => relevant.has(cwd));
+    if (affected.length === 0) return Promise.resolve();
+    const request = this.projectSessionsRequest;
+    const key = JSON.stringify([machineId, project.id, project.path, workspace.id, workspace.path, request]);
+    let scope = this.pendingSessionListRefresh;
+    if (scope?.key !== key) {
+      scope = { key, request, machineId, project, workspace, cwds: new Set() };
+      this.pendingSessionListRefresh = scope;
+    }
+    for (const cwd of affected) scope.cwds.add(cwd);
+    return this.scheduleSessionListRefresh(scope);
+  }
+
+  private scheduleSessionListRefresh(scope: SessionListRefreshScope): Promise<void> {
+    return this.sessionListRefreshes.request(scope.key, async () => {
+      // WebSocket messages arrive in separate tasks; a short window also merges
+      // those bursts rather than only callers within a single microtask turn.
+      await new Promise<void>((resolve) => { setTimeout(resolve, 50); });
+      // Foreground selection owns its initial reads. Keep invalidations dirty until
+      // it settles, then re-read; otherwise its older response could resurrect rows.
+      if (!this.isSessionListRefreshCurrent(scope) || this.getState().isLoadingSessions) return;
+      const cwds = [...scope.cwds].filter((cwd) => this.relevantSessionCwds().has(cwd));
+      scope.cwds.clear();
+      const revisions = new Map(cwds.map((cwd) => {
+        const revision = (this.sessionListRevisions.get(cwd) ?? 0) + 1;
+        this.sessionListRevisions.set(cwd, revision);
+        return [cwd, revision];
+      }));
+      const results = await Promise.allSettled(cwds.map(async (cwd) => ({ cwd, sessions: await this.api.sessions(cwd, scope.machineId) })));
+      if (!this.isSessionListRefreshCurrent(scope)) return;
+      const relevant = this.relevantSessionCwds();
+      const lists: { cwd: string; sessions: SessionInfo[] }[] = [];
+      for (const result of results) {
+        if (result.status === "rejected") this.reportBackgroundError("refresh invalidated session list", result.reason);
+        else if (relevant.has(result.value.cwd) && revisions.get(result.value.cwd) === this.sessionListRevisions.get(result.value.cwd)) lists.push(result.value);
+      }
+      if (lists.length > 0) await this.sessions.applyRefreshedSessionLists(lists, scope.machineId);
+    }).catch((error: unknown) => {
+      if (this.isSessionListRefreshCurrent(scope)) this.reportBackgroundError("refresh invalidated session lists", error);
+    });
+  }
+
+  private relevantSessionCwds(): Set<string> {
+    const state = this.getState();
+    return new Set([
+      ...state.workspaces.filter((workspace) => workspace.projectId === state.selectedProject?.id).map((workspace) => workspace.path),
+      ...(state.selectedWorkspace === undefined ? [] : [state.selectedWorkspace.path]),
+    ]);
+  }
+
+  private isSessionListRefreshCurrent(scope: SessionListRefreshScope): boolean {
+    const state = this.getState();
+    return !this.disposed && scope.request === this.projectSessionsRequest
+      && selectedMachineId(state) === scope.machineId
+      && state.selectedProject?.id === scope.project.id && state.selectedProject.path === scope.project.path
+      && state.selectedWorkspace?.id === scope.workspace.id && state.selectedWorkspace.path === scope.workspace.path;
   }
 
   clearSelection(options?: { updateUrl?: boolean | undefined; preserveError?: boolean | undefined }) {
@@ -226,6 +312,9 @@ export class WorkspaceController {
         return;
       }
       this.applyCatalogFallbackSessionFailure(workspace, machineId, catalogFallback, error);
+    } finally {
+      const pending = this.pendingSessionListRefresh;
+      if (pending !== undefined && pending.cwds.size > 0 && this.isSessionListRefreshCurrent(pending)) void this.scheduleSessionListRefresh(pending);
     }
   }
 
@@ -241,6 +330,7 @@ export class WorkspaceController {
     const projectWorkspaces = state.workspaces.filter((candidate) => candidate.projectId === workspace.projectId);
     if (!projectWorkspaces.some((candidate) => candidate.id === workspace.id)) projectWorkspaces.unshift(workspace);
 
+    const revisions = new Map(this.sessionListRevisions);
     try {
       const sessionLists = await Promise.all(projectWorkspaces.map(async (candidate) => {
         if (candidate.id === workspace.id) return currentSessions;
@@ -248,7 +338,15 @@ export class WorkspaceController {
       }));
       if (!this.isCurrentWorkspaceSessionRequest(request, workspace, machineId)
         || !this.isCatalogSelectionScopeCurrent(catalogScope)) return;
-      this.setState({ projectSessions: uniqueSessionsByPath(sessionLists.flat()) });
+      // A later invalidation read outranks this initial catalog read per CWD.
+      const currentCwds = this.relevantSessionCwds();
+      const applicable = projectWorkspaces.filter((candidate) => currentCwds.has(candidate.path)
+        && revisions.get(candidate.path) === this.sessionListRevisions.get(candidate.path));
+      const replaced = new Set(applicable.map((candidate) => candidate.path));
+      this.setState({ projectSessions: uniqueSessionsByPath([
+        ...sessionLists.flat().filter((session) => replaced.has(session.cwd)),
+        ...this.getState().projectSessions.filter((session) => !replaced.has(session.cwd)),
+      ]) });
     } catch {
       // Cross-workspace grouping is an enhancement; preserve the current
       // workspace's already-loaded sessions if a sibling cannot be listed. A
@@ -481,6 +579,7 @@ export class WorkspaceController {
     const { machineId, project } = snapshot;
     if (workspacesToHydrate.length === 0 || !this.isProjectCatalogSnapshotCurrent(snapshot)) return;
 
+    const revisions = new Map(this.sessionListRevisions);
     const results = await Promise.allSettled(workspacesToHydrate.map(async (workspace) => {
       const sessions = await this.api.sessions(workspace.path, machineId);
       if (!this.isWorkspaceCurrentForProject(snapshot, workspace)) return undefined;
@@ -497,7 +596,7 @@ export class WorkspaceController {
         this.reportBackgroundError("reconcile discovered workspace sessions", result.reason);
         continue;
       }
-      if (result.value === undefined) continue;
+      if (result.value === undefined || revisions.get(workspace.path) !== this.sessionListRevisions.get(workspace.path)) continue;
       this.unhydratedWorkspaceKeys.delete(workspaceHydrationKey(machineId, project.id, workspace));
       hydratedSessions.push(...result.value.sessions);
       hydratedSessionsByWorkspace.set(workspaceIdentity(workspace), result.value.sessions);

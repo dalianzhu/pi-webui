@@ -2,7 +2,7 @@ import type { TemplateResult } from "lit";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MachineRuntime, SessionInfo, SessionReorderRequest } from "../api";
 import { initialAppState, type AppState } from "../appState";
-import { ProjectCatalogController } from "../controllers/projectCatalogController";
+import { WorkspaceController } from "../controllers/workspaceController";
 import { SessionController } from "../controllers/sessionController";
 import { PI_WEBUI_CAPABILITIES } from "../../../shared/capabilities";
 import { templateValueAfterMarker } from "../templateInspection.testSupport";
@@ -63,13 +63,13 @@ describe("PiWebUiApp session reorder wiring", () => {
     expect(reorderSession).toHaveBeenCalledExactlyOnceWith(selected, request);
   });
 
-  it("injects project-catalog refresh as the controller recovery boundary", async () => {
+  it("injects authoritative session-list refresh as the controller recovery boundary", async () => {
     const app = createApp();
-    const projectCatalog: unknown = Reflect.get(app, "projectCatalog");
-    if (!(projectCatalog instanceof ProjectCatalogController)) {
-      throw new Error("PiWebUiApp ProjectCatalogController was unavailable");
+    const workspaces: unknown = Reflect.get(app, "workspaces");
+    if (!(workspaces instanceof WorkspaceController)) {
+      throw new Error("PiWebUiApp WorkspaceController was unavailable");
     }
-    const refresh = vi.spyOn(projectCatalog, "refresh").mockResolvedValue(undefined);
+    const refresh = vi.spyOn(workspaces, "refreshSessionLists").mockResolvedValue(undefined);
     const recovery: unknown = Reflect.get(
       appSessionController(app),
       "refreshProjectSessionCatalog",

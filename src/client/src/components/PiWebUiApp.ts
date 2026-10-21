@@ -257,13 +257,14 @@ export class PiWebUiApp extends LitElement {
       if (this.hostSpeechSurfaceVisible()) this.requestUpdate();
     },
   });
-  private readonly sessions = new SessionController(
+  private readonly sessions: SessionController = new SessionController(
     () => this.state,
     (patch) => { this.setState(patch); },
     () => { this.updateUrl(); },
     new SessionStorageSessionSelectionMemory(),
     {
-      refreshProjectSessionCatalog: () => this.projectCatalog.refresh(),
+      refreshProjectSessionCatalog: () => this.workspaces.refreshSessionLists(),
+      refreshSessionLists: (cwds, machineId) => this.workspaces.refreshSessionLists(cwds, machineId),
       notifications: this.notifications,
       onSelectedSessionReady: ({ machineId, session }) => {
         void this.commitReadyChatAfterRender(machineId, session);
@@ -277,7 +278,7 @@ export class PiWebUiApp extends LitElement {
       onStarterModelPolicySubstitution: (event) => { this.handleStarterModelPolicySubstitution(event); },
     },
   );
-  private readonly workspaces = new WorkspaceController(
+  private readonly workspaces: WorkspaceController = new WorkspaceController(
     () => this.state,
     (patch) => { this.setState(patch); },
     () => { this.updateUrl(); },
@@ -760,6 +761,7 @@ export class PiWebUiApp extends LitElement {
     this.auth.dispose();
     this.resetActiveModelPolicyDraft();
     this.sessions.dispose();
+    this.workspaces.dispose();
     this.projectCatalog.dispose();
     this.notifications.dispose();
     this.realtime.close();
@@ -1572,6 +1574,8 @@ export class PiWebUiApp extends LitElement {
     this.realtime.connect(
       (event) => { this.handleRealtimeEvent(machineId, event); },
       () => {
+        if (selectedMachineId(this.state) !== machineId) return;
+        void this.workspaces.refreshSessionLists(undefined, machineId);
         void this.renegotiateUnreadMachine(machineId);
         const workspace = this.state.selectedWorkspace;
         if (workspace !== undefined) void this.refreshActiveTerminals(workspace);
@@ -1623,7 +1627,9 @@ export class PiWebUiApp extends LitElement {
   }
 
   private handleRealtimeEvent(machineId: string, event: BrowserRealtimeEvent): void {
-    if (event.type === "sessions.unread") this.sessionUnread.applyEvent(machineId, event);
+    if (selectedMachineId(this.state) !== machineId) return;
+    if (event.type === "sessions.changed") void this.workspaces.refreshSessionLists([event.cwd], machineId);
+    else if (event.type === "sessions.unread") this.sessionUnread.applyEvent(machineId, event);
     else if (event.type === "workspace.activity") this.activity.applyWorkspaceActivity(event.activity);
     else if (isTerminalEvent(event)) {
       this.applyTerminalEvent(event);

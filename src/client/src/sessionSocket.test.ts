@@ -90,6 +90,12 @@ describe("notification socket guards", () => {
     })).toBeUndefined();
   });
 
+  it("accepts scoped list invalidation only on the global socket and rejects malformed CWDs", () => {
+    expect(parseRealtimeSocketEvent({ type: "sessions.changed", cwd: "/repo" })).toEqual({ type: "sessions.changed", cwd: "/repo" });
+    for (const cwd of [undefined, null, 42, ""]) expect(parseRealtimeSocketEvent({ type: "sessions.changed", cwd })).toBeUndefined();
+    expect(parseSessionSocketEvent({ type: "sessions.changed", cwd: "/repo" })).toBeUndefined();
+  });
+
   it("preserves existing event acceptance without treating unknown types as realtime events", () => {
     expect(parseSessionSocketEvent({ type: "command.output", level: "info", message: "legacy" })).toMatchObject({ type: "command.output" });
     expect(parseRealtimeSocketEvent({ type: "future.notification", payload: {} })).toBeUndefined();

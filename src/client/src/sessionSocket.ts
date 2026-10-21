@@ -159,6 +159,10 @@ export function parseSessionSocketEvent(event: unknown): SessionUiEvent | undefi
 }
 
 export function parseRealtimeSocketEvent(event: unknown): BrowserRealtimeEvent | undefined {
+  if (eventType(event) === "sessions.changed") {
+    if (typeof event !== "object" || event === null || !("cwd" in event) || typeof event.cwd !== "string" || event.cwd === "") return undefined;
+    return { type: "sessions.changed", cwd: event.cwd };
+  }
   if (eventType(event) === "sessions.unread") return safelyParseValidatedEvent(() => parseSessionUnreadEvent(event));
   if (isLegacyGlobalSessionEvent(event) || isLegacyRealtimeEvent(event)) return event;
   return undefined;

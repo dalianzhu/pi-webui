@@ -146,6 +146,7 @@ describe("WorkspaceController", () => {
       (patch) => { state = { ...state, ...patch }; },
       () => undefined,
       {
+        ...sessionControllerStub(),
         clearActiveSession: () => undefined,
         preferredSession: (_cwd, sessions) => sessions[0],
         selectSession: (selected) => {
@@ -241,6 +242,7 @@ describe("WorkspaceController", () => {
       (patch) => { state = { ...state, ...patch }; },
       () => undefined,
       {
+        ...sessionControllerStub(),
         clearActiveSession: () => undefined,
         preferredSession: (_cwd, sessions) => sessions[0],
         selectSession: (selected) => {
@@ -295,6 +297,7 @@ describe("WorkspaceController", () => {
       (patch) => { state = { ...state, ...patch }; },
       () => undefined,
       {
+        ...sessionControllerStub(),
         clearActiveSession: () => undefined,
         preferredSession: (_cwd, sessions) => sessions[0],
         selectSession: (selected) => {
@@ -587,6 +590,7 @@ describe("WorkspaceController", () => {
       listSessions,
       updateUrl,
       sessionController: {
+        applyRefreshedSessionLists: () => Promise.resolve(),
         clearActiveSession: () => undefined,
         preferredSession: () => parentSession,
         selectSession,
@@ -934,6 +938,7 @@ describe("WorkspaceController", () => {
       listSessions,
       updateUrl,
       sessionController: {
+        applyRefreshedSessionLists: () => Promise.resolve(),
         clearActiveSession: () => undefined,
         preferredSession: () => staleListedSession,
         selectSession,
@@ -1062,7 +1067,7 @@ interface CatalogHarnessInput extends Partial<AppState> {
   listSessions?: ListSessions;
   listWorkspaces?: ListWorkspaces;
   onBackgroundError?: WorkspaceControllerDependencies["onBackgroundError"];
-  sessionController?: Pick<SessionController, "clearActiveSession" | "preferredSession" | "selectSession">;
+  sessionController?: Pick<SessionController, "clearActiveSession" | "preferredSession" | "selectSession" | "applyRefreshedSessionLists">;
   updateUrl?: () => void;
 }
 
@@ -1142,8 +1147,9 @@ function catalogHarnessWithLiveSessionController(input: {
   return { controller, sessionController, state };
 }
 
-function sessionControllerStub(): Pick<SessionController, "clearActiveSession" | "preferredSession" | "selectSession"> {
+function sessionControllerStub(): Pick<SessionController, "clearActiveSession" | "preferredSession" | "selectSession" | "applyRefreshedSessionLists"> {
   return {
+    applyRefreshedSessionLists: () => Promise.resolve(),
     clearActiveSession: () => undefined,
     preferredSession: () => undefined,
     selectSession: () => Promise.resolve(),

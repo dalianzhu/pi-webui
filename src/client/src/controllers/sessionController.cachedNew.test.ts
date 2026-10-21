@@ -33,6 +33,21 @@ describe("SessionController cached-new sessions", () => {
     expect(state.selectedSession?.messageCount).toBe(1);
   });
 
+  it("keeps an unsent recovery record when a successful command only displays help", async () => {
+    const storage = new MemoryStorage();
+    Object.defineProperty(globalThis, "localStorage", { value: storage, configurable: true });
+    const transient = { ...oldSession, persisted: false };
+    rememberCachedNewSession(transient);
+    const cached = markCachedNewSessionInfo(transient);
+    let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, selectedSession: cached, sessions: [cached] };
+    const controller = new SessionController(() => state, (patch) => { state = { ...state, ...patch }; }, () => undefined, undefined, {
+      socket: new FakeSocket(), api: { ...defaultApi, runCommand: () => Promise.resolve({ type: "done", message: "help" }) },
+    });
+    expect(await controller.runCommand("/help")).toBe(true);
+    expect(loadCachedNewSessions().map((session) => session.id)).toEqual([oldSession.id]);
+    expect(state.selectedSession).toHaveProperty("browserCachedNew", true);
+  });
+
   it("deletes transient server-reported new sessions and clears local state", async () => {
     const storage = new MemoryStorage();
     Object.defineProperty(globalThis, "localStorage", { value: storage, configurable: true });

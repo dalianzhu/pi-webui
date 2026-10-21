@@ -284,6 +284,24 @@ describe("SessionEventHub", () => {
     expect(sessionSocket.send).not.toHaveBeenCalled();
   });
 
+  it("fans list invalidations out to every global subscriber without stamping a session seq", () => {
+    const hub = new SessionEventHub();
+    const first = new FakeSocket();
+    const second = new FakeSocket();
+    const sessionSocket = new FakeSocket();
+    hub.addGlobal(first);
+    hub.addGlobal(second);
+    hub.add("s1", sessionSocket);
+    const event = { type: "sessions.changed" as const, cwd: "/workspace" };
+
+    hub.publishGlobal(event);
+
+    expect(first.send).toHaveBeenCalledExactlyOnceWith(JSON.stringify(event));
+    expect(second.send).toHaveBeenCalledExactlyOnceWith(JSON.stringify(event));
+    expect(sessionSocket.send).not.toHaveBeenCalled();
+    expect(hub.currentSeq("s1")).toBe(0);
+  });
+
   it("publishes authoritative unread deltas only to global sockets", () => {
     const hub = new SessionEventHub();
     const globalSocket = new FakeSocket();
