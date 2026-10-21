@@ -113,14 +113,26 @@ declared container that must consume the payload exactly**:
 | Format | Required structure |
 | --- | --- |
 | PNG | 8-byte signature; chunk walk where each chunk is `length(4) type(4) data(length) crc(4)`; first chunk `IHDR` with length 13 and non-zero width/height; at least one `IDAT` with length > 0; final chunk `IEND` with length 0; walk ends exactly at payload end |
-| JPEG | `FFD8` first; marker walk that honours segment lengths and enters entropy-coded scan data after `SOS`, skipping byte stuffing (`FF00`) and restart markers (`FFD0`-`FFD7`); at least one `SOFn` frame header with non-zero dimensions; at least one `SOS`; ends with `FFD9`, and the scan terminates at that marker |
-| GIF | `GIF87a` or `GIF89a`; logical screen descriptor; optional global colour table; block walk over extensions (`0x21`, sub-block terminated) and image descriptors (`0x2C`) where at least one descriptor has non-zero dimensions, a valid LZW minimum-code size, and data sub-blocks terminated by `0x00`; ends with the `0x3B` trailer |
-| WebP | `RIFF` with a size consistent with the payload, `WEBP` fourcc, then a chunk walk; at least one **image-bearing** `VP8 ` or `VP8L` chunk with length > 0 — `VP8X` alone is container metadata and never satisfies this |
+| JPEG | `FFD8` first; marker walk that honours segment lengths, skipping byte stuffing (`FF00`) and restart markers (`FFD0`-`FFD7`) inside entropy-coded data; at least one `SOFn` frame header with non-zero dimensions; at least one `SOS` followed by **at least one entropy-coded byte before the next marker**, so `SOFn` + `SOS` + `FFD9` with no scan payload is rejected; multi-scan (progressive) files are accepted by continuing the marker walk over further `SOS` segments until `FFD9`, which must be the last bytes of the payload |
+| GIF | `GIF87a` or `GIF89a`; logical screen descriptor; optional global colour table; block walk over extensions (`0x21`, sub-block terminated) and image descriptors (`0x2C`) where at least one descriptor has non-zero dimensions, a valid LZW minimum-code size, and a data sub-block sequence containing **at least one non-empty sub-block** before the `0x00` terminator, so a descriptor with only an immediate terminator is rejected; ends with the `0x3B` trailer |
+| WebP | `RIFF` with a size consistent with the payload (odd-sized chunks are padded to even lengths), `WEBP` fourcc, then a chunk walk over a correctly padded sequence; the image data may be a top-level **image-bearing** `VP8 ` or `VP8L` chunk with length > 0 **or** an `ANMF` frame chunk whose payload (16-byte frame header, then its own padded sub-chunk walk) contains such an image chunk — this keeps animated WebP restorable. `VP8X` is container metadata and never satisfies the image-data requirement on its own |
 
 Anything else — marker-only shells, a PNG with signature plus `IEND` and no image data, `FFD8FFD9`, a
-GIF header plus trailer, or `VP8X`-only WebP — is counted as unrestorable. The predicate lives beside
-the shared attachment helpers as an **additional** restoration check; `parsePromptAttachments()` keeps
-its current behavior. It is synchronous and dependency-free so it can run inside a pure projection.
+JPEG with headers and no scan bytes, a GIF descriptor with no data sub-block, or `VP8X`-only WebP — is
+counted as unrestorable. Pi preserves the original bytes and MIME type when an image already fits its
+limits, so progressive JPEG and animated WebP payloads genuinely reach the transcript and must be
+accepted, not just produced by the resize path.
+
+| Rejection example | Why it fails |
+| --- | --- |
+| signature + `IEND` | no `IHDR`/`IDAT` |
+| `FFD8` + `SOF0` + `SOS` + `FFD9` | zero entropy-coded bytes |
+| `GIF89a` + descriptor + `0x00` + `0x3B` | empty image-data sub-block sequence |
+| `VP8X`-only RIFF | container metadata without image data |
+
+The predicate lives beside the shared attachment helpers as an **additional** restoration check;
+`parsePromptAttachments()` keeps its current behavior. It is synchronous and dependency-free so it can
+run inside a pure projection.
 
 **Bounded claim.** Validation proves the client can detect framing and structural incompleteness and
 that the declared MIME type matches the container. It cannot prove Pi's own decoder will accept the
@@ -160,8 +172,12 @@ mergePromptAttachments(existing, incoming, capacity = MAX_PROMPT_ATTACHMENTS): {
 ```
 
 Identity is `(mimeType, data)` — `kind` is excluded, so an image restored from the transcript matches a
-chip the user already captured. A match is promoted (`restored: true`), keeps its id, and preserves the
-override attached to the set; it is never duplicated. Routing capture through the same merge closes the
+chip the user already captured. A match is promoted **in place**: it keeps its position and id,
+preserves the override attached to the set, gains `restored: true`, and adopts the restored image's
+`kind`, `name`, and image metadata. A matching chip can therefore never stay classified as a generic
+file and block the set from inline delivery. (Capture derives `kind` from the MIME type, so such a
+cross-kind match is not produced by capture today; the rule exists so promotion cannot silently keep a
+non-image classification.) Nothing is ever duplicated. Routing capture through the same merge closes the
 cap hole that today can produce an unsendable 17-attachment draft. Announcing an over-cap paste instead
 of silently exceeding the cap is a deliberate, tested change.
 
@@ -217,14 +233,19 @@ Dispatch contract:
   `replaceText()` only, so `/tree` behavior is unchanged and no chips are written.
 - Edit from here calls it with the projection's fields. The app applies `replaceDraft()`, so text and
   chips land together.
-- The callback runs **exactly once** per navigation, after the authoritative refresh, inside the
-  existing identity guards (`await this.updateComplete`, then recheck selected machine and session).
-  When the guards reject, nothing is restored: the inherited reselection behavior from the Scope
-  Boundary, not a new failure mode.
+- The callback runs **exactly once** per navigation, inside the existing identity guards
+  (`await this.updateComplete`, then recheck selected machine and session). When the guards reject,
+  nothing is restored: the inherited reselection behavior from the Scope Boundary, not a new failure
+  mode.
 - Cancelled navigation changes nothing.
+- **Refresh-failure behavior is preserved exactly.** Today `selectSession()` failures are captured, the
+  composer callback still runs when the identity still matches, and the refresh error is re-raised
+  afterwards. The single rich callback keeps that sequence for both callers: a thrown callback error is
+  recorded in app state and rethrown first, so it wins; a captured refresh error is recorded and
+  rethrown only when the callback did not throw. One dispatch, one precedence rule, no new branch for
+  attachments.
 
-`PiWebUiApp` implements the one callback with the existing guard sequence and delegates to the editor;
-`SessionController` keeps its current error propagation for a thrown callback.
+`PiWebUiApp` implements the one callback with the existing guard sequence and delegates to the editor.
 
 ## Error Handling
 
@@ -266,13 +287,17 @@ plus corrupt variants.
 
 1. **Projection (pure).** Text-only unchanged; one and many images restored; text intact around
    interleaved image parts; `missingImage` counted; user-authored `"[image]"` not counted;
-   pattern-matching `"A"` counted; per format: truncated payload, marker-only shell (`IHDR`+`IEND`,
-   `FFD8FFD9`, header+trailer, `VP8X`-only WebP), malformed PNG chunk length, malformed JPEG
-   segment/scan boundary, GIF image descriptor without terminated data sub-blocks, inconsistent WebP
-   chunk size, and MIME/container mismatch; name and byte size derived.
-2. **Merge (pure).** Append; dedupe across differing `kind` with the same `(mimeType, data)`; promotion
-   keeps the id; cap at 16 with `omittedForCapacity`; capacity accounting before and after dedupe; no
-   over-cap result from a delayed capture or starter ingest.
+   pattern-matching `"A"` counted; name and byte size derived. Per format, both directions:
+   *rejected* — truncated payload, every shell in the rejection table, malformed PNG chunk length,
+   malformed JPEG segment boundary, inconsistent WebP chunk size, and MIME/container mismatch;
+   *accepted* — baseline and **progressive/multi-scan JPEG**, **animated WebP with nested `ANMF`
+   frames**, odd-sized RIFF chunk padding, and real payloads captured from the transcript for both Pi
+   paths: unchanged original bytes/MIME when the image already fits, and resized output whose MIME
+   type Pi changed.
+2. **Merge (pure).** Append; dedupe by `(mimeType, data)` across differing `kind`; promotion keeps
+   position and id while adopting the restored image's kind/metadata, so the resulting set is eligible
+   for inline delivery; cap at 16 with `omittedForCapacity`; capacity accounting before and after
+   dedupe; no over-cap result from a delayed capture or starter ingest.
 3. **Draft store (pure).** Both new fields survive read, write, capture completion, and scope moves;
    override-only creates no entry; notice-only survives; capture with no omission preserves an existing
    notice while clearing `error`; capture with a capacity omission replaces it.
@@ -283,7 +308,9 @@ plus corrupt variants.
    restore clears the notice.
 5. **Controller.** The rich draft is applied exactly once after a successful navigation; `/tree`
    navigation invokes the same callback with no attachment fields and writes no chips; nothing is
-   applied on cancel or after an identity change.
+   applied on cancel or after an identity change; a failed authoritative refresh still dispatches the
+   callback once when identity matches, with callback-error precedence over the refresh error, matching
+   today's ordering.
 6. **Wiring and send.** The message action passes text, attachments, and the count; restored-only chips
    send inline with the original text; restored image plus generic file takes the folder
    upload/reference-rewrite path.
@@ -291,8 +318,10 @@ plus corrupt variants.
    present in accessible names.
 
 Falsifiability: each core test must fail when the projection's structural validation, the merge's
-promotion or cap, the notice composition, or the delivery rule is removed; callback-call assertions
-alone do not count.
+promotion or cap, the notice composition, the delivery rule, or the dispatch count is removed.
+Mutation probes are required for the structural predicates (drop the scan-data, sub-block, and `ANMF`
+requirements one at a time), for dedupe and cap enforcement, and for the single-dispatch guarantee;
+callback-call assertions alone do not count.
 
 Verification: focused Vitest files, `npm run typecheck`, ESLint on changed files, then
 `npm run verify:fast`. A patch Changeset accompanies the user-visible fix.
