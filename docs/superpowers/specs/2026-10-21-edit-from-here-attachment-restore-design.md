@@ -43,9 +43,11 @@ Three properties of the current code are load-bearing:
    callback when the selection changed; `PromptEditor.willUpdate()` then parks its stale in-memory
    draft over it. That behavior predates this feature and affects `/tree` navigation identically.
 
-The stored image is Pi's resized copy (≤2000×2000, produced by `attachmentsToInlineImages`, which can
-also change the MIME type and drop undecodable images), not the original file, and that must not be
-hidden from the user.
+The transcript keeps whatever bytes Pi accepted for the prompt: the original bytes and MIME type when the
+image already fit Pi's limits, otherwise a resized copy (≤2000×2000, produced by
+`attachmentsToInlineImages`, which can also change the MIME type and drop images it cannot bring under
+the limit). A restored chip therefore reproduces the transcript's image, which is not necessarily the
+original file, and that must not be hidden from the user.
 
 Files sent with "Save to `.pi-webui/attachments`" are unaffected: their mention text is part of the
 prompt text and is already restored by the existing text draft.
@@ -264,7 +266,7 @@ Dispatch contract:
 - The composer can hold chips whose delivery differs from the saved preference; the selector shows and
   controls it.
 - Restored images live in the app-lifetime draft store until send, removal, discard, or reload.
-- Re-sent images are resized transcript copies; provenance says so.
+- Re-sent images are the transcript's own bytes, which may be a resized copy; provenance says so.
 - Capture now announces an over-cap paste instead of producing an unsendable draft.
 - Two new optional draft fields require every scope operation to agree on them; store tests pin it.
 
@@ -329,7 +331,8 @@ Verification: focused Vitest files, `npm run typecheck`, ESLint on changed files
 Documentation: `docs/config.md` is the configuration reference and is not the right home for this
 behavior. Add one FAQ entry to `docs/faq.html` — the canonical page for user-facing behavior edge cases
 — titled around "Edit from here and message images", covering that images are restored as attachments,
-that the restored image is the resized copy kept in the transcript, that an incomplete restore is
-announced, and that switching sessions while the action runs leaves the draft unchanged. Add the entry
+that the restored image is the copy kept in the transcript (which may be a resized version of the
+original file), that an incomplete restore is announced, and that switching sessions while the action
+runs leaves the draft unchanged. Add the entry
 to the page's in-page index list and keep the wording consistent with the implementation, following
 `.agents/skills/documentation-guide/SKILL.md`.
