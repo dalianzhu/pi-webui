@@ -74,6 +74,22 @@ describe("effectivePromptAttachmentDelivery", () => {
     expect(effectivePromptAttachmentDelivery("folder", [{ kind: "image", mimeType: "image/png" }])).toBe("folder");
   });
 
+  it("forces inline delivery for restored images when the set is inline-deliverable", () => {
+    expect(effectivePromptAttachmentDelivery("folder", [
+      { kind: "image", mimeType: "image/png", restored: true },
+    ])).toBe("inline");
+  });
+
+  it("honors a folder override for restored images and still forces folder for mixed sets", () => {
+    expect(effectivePromptAttachmentDelivery("inline", [
+      { kind: "image", mimeType: "image/png", restored: true },
+    ], "folder")).toBe("folder");
+    expect(effectivePromptAttachmentDelivery("inline", [
+      { kind: "image", mimeType: "image/png", restored: true },
+      { kind: "file", mimeType: "application/pdf" },
+    ], "inline")).toBe("folder");
+  });
+
   it("forces folder delivery when any attachment is a generic file", () => {
     expect(effectivePromptAttachmentDelivery("inline", [
       { kind: "image", mimeType: "image/png" },

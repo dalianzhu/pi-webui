@@ -34,9 +34,9 @@ describe("PiWebUiApp per-message action wiring", () => {
     expect(templateForkFromHereCallback(secondRender)).toBe(firstFork);
     const focusChatComposer = vi.fn(() => Promise.resolve());
     if (!Reflect.set(app, "focusChatComposer", focusChatComposer)) throw new Error("Could not replace prompt focus boundary");
-    await firstEdit("assistant-1", "Revise this");
+    await firstEdit("assistant-1", { text: "Revise this", attachments: [], unrestorableImageCount: 0 });
     await firstFork("user-2");
-    expect(editFromHere).toHaveBeenCalledExactlyOnceWith("assistant-1", "Revise this");
+    expect(editFromHere).toHaveBeenCalledExactlyOnceWith("assistant-1", { text: "Revise this", attachments: [], unrestorableImageCount: 0 });
     expect(focusChatComposer).toHaveBeenCalledOnce();
     expect(forkFromHere).toHaveBeenCalledExactlyOnceWith("user-2");
   });
@@ -110,7 +110,7 @@ type RenderChatView = (this: PiWebUiApp, state: AppState, session: SessionInfo) 
 type RenderApp = (this: PiWebUiApp) => TemplateResult;
 type ClearServerQueueCallback = () => void;
 type CompactCallback = () => void;
-type EditFromHereCallback = (assistantEntryId: string, editorText: string) => void | Promise<void>;
+type EditFromHereCallback = (assistantEntryId: string, draft: { text: string; attachments: []; unrestorableImageCount: number }) => void | Promise<void>;
 type ForkFromHereCallback = (userEntryId: string) => void | Promise<void>;
 
 function createApp(): PiWebUiApp {

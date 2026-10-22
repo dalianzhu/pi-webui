@@ -19,7 +19,7 @@ import {
   chatMessageGroupClassName,
   chatMessageGroupLabel,
   chatMessageMetadataLabel,
-  chatMessageEditText,
+  chatMessageEditDraft,
   chatQueuedMessageSections,
   chatQueuedMessagesCopyText,
   chatQueuedSectionsHaveBothServerKinds,
@@ -56,8 +56,32 @@ describe("chatUserMessageActionAvailability", () => {
     expect(chatUserMessageActionAvailability({ role: "user", parts: message.parts, entryId: "user-2" }, { enabled: true, busy: false })).toEqual({});
   });
 
-  it("uses untrimmed text parts as the edit draft, matching the original user message", () => {
-    expect(chatMessageEditText({ ...message, parts: [{ type: "text", text: " first " }, { type: "text", text: "second" }] })).toBe(" first \nsecond");
+  it("projects untrimmed text and structurally complete images into the edit draft", () => {
+    const draft = chatMessageEditDraft({
+      ...message,
+      parts: [
+        { type: "text", text: " first " },
+        { type: "image", mimeType: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC" },
+        { type: "image", mimeType: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAA" },
+        { type: "text", text: "second" },
+      ],
+    });
+
+    expect(draft).toEqual({
+      text: " first \nsecond",
+      attachments: [{ kind: "image", name: "message.png", mimeType: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC", size: 69 }],
+      unrestorableImageCount: 1,
+    });
+  });
+
+  it("counts only marked missing images, not a user-typed image placeholder", () => {
+    expect(chatMessageEditDraft({
+      role: "user",
+      parts: [
+        { type: "text", text: "[image]" },
+        { type: "text", text: "[image]", missingImage: true },
+      ],
+    })).toEqual({ text: "[image]\n[image]", attachments: [], unrestorableImageCount: 1 });
   });
 });
 
@@ -85,7 +109,11 @@ describe("ChatView per-message action wiring", () => {
     templateEventHandlerNearMarker(rendered, "data-message-action=\"new-session\"")(new Event("click"));
     await Promise.resolve();
 
-    expect(onEditFromHere).toHaveBeenCalledExactlyOnceWith("assistant-1", "Revise this");
+    expect(onEditFromHere).toHaveBeenCalledExactlyOnceWith("assistant-1", {
+      text: "Revise this",
+      attachments: [],
+      unrestorableImageCount: 0,
+    });
     expect(onForkFromHere).toHaveBeenCalledExactlyOnceWith("user-2");
   });
 

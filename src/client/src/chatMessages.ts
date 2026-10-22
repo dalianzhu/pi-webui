@@ -179,7 +179,7 @@ function normalizeContent(content: unknown, message: unknown): ChatPart[] {
       const data = getString(part, "data");
       const mimeType = getString(part, "mimeType");
       if (data !== undefined && data !== "" && mimeType !== undefined && mimeType !== "") return [{ type: "image", mimeType, data }];
-      return [{ type: "text", text: "[image]" }];
+      return [{ type: "text", text: "[image]", missingImage: true }];
     }
     return objectFallback(part);
   }).map((part) => part.type === "text" && getString(message, "role") === "toolResult"

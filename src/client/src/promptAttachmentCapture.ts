@@ -74,9 +74,12 @@ export function promptAttachmentsCanUseInlineDelivery(attachments: readonly Pick
 
 export function effectivePromptAttachmentDelivery(
   preferredDelivery: PromptAttachmentDelivery,
-  attachments: readonly Pick<CapturedAttachment, "kind" | "mimeType">[],
+  attachments: readonly (Pick<CapturedAttachment, "kind" | "mimeType"> & { restored?: true })[],
+  override?: PromptAttachmentDelivery,
 ): PromptAttachmentDelivery {
-  return promptAttachmentsCanUseInlineDelivery(attachments) ? preferredDelivery : "folder";
+  if (!promptAttachmentsCanUseInlineDelivery(attachments)) return "folder";
+  const anyRestored = attachments.some((attachment) => attachment.restored === true);
+  return anyRestored ? (override ?? "inline") : (override ?? preferredDelivery);
 }
 
 function capturedAttachment(file: CapturableFile, data: string): CapturedAttachment {

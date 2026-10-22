@@ -49,7 +49,7 @@ export interface ToolExecutionPart {
 }
 
 export type ChatPart =
-  | { type: "text"; text: string }
+  | { type: "text"; text: string; missingImage?: true }
   | { type: "image"; mimeType: string; data: string }
   | { type: "thinking"; text: string }
   | { type: "skillInvocation"; name: string; location: string; content: string }

@@ -14,6 +14,9 @@ import {
 } from "../../../shared/apiTypes";
 import { capturePromptAttachments, effectivePromptAttachmentDelivery, isInlinePromptAttachment, promptAttachmentsCanUseInlineDelivery } from "../promptAttachmentCapture";
 import { promptAttachmentDrafts, PromptAttachmentDraftStore, type PendingAttachment, type PromptAttachmentDraft, type PromptAttachmentDraftScope } from "../promptAttachmentDrafts";
+import { formatAttachmentNotice } from "../attachmentNotice";
+import { mergePromptAttachments } from "../promptAttachmentMerge";
+import type { ChatRestoredAttachment } from "./ChatView";
 import { inputModeForDraft, inputModesEqual, type InputMode } from "../inputModes";
 import { machineSessionKey } from "../machineKeys";
 import { detectPromptCompletionTrigger, fileCompletionInsertText, type PromptCompletionTrigger } from "../promptCompletions";
@@ -32,6 +35,8 @@ import "./AutocompleteMenu";
 import "./SessionModelPolicyControl";
 import "./SessionThinkingMenu";
 import "./SessionTierMenu";
+
+const RESTORED_ATTACHMENT_PROVENANCE = "restored from this message; may be a resized copy";
 
 @customElement("prompt-editor")
 export class PromptEditor extends LitElement {
@@ -85,7 +90,9 @@ export class PromptEditor extends LitElement {
   @state() private selectedIndex = 0;
   @state() private attachments: PendingAttachment[] = [];
   @state() private attachmentDelivery: PromptAttachmentDelivery = loadAttachmentDelivery();
+  @state() private attachmentDeliveryOverride: PromptAttachmentDelivery | undefined = undefined;
   @state() private attachmentError: string | undefined = undefined;
+  @state() private attachmentNotice: string | undefined = undefined;
   @state() private speechInputState: SpeechInputControllerState = {
     kind: "idle",
     unavailableReason: "Speech settings are still loading.",
@@ -133,7 +140,7 @@ export class PromptEditor extends LitElement {
       previousKey !== undefined
       && previousKey !== currentKey
       && previousScope?.currentKey() === previousKey
-      && (this.attachments.length > 0 || this.attachmentError !== undefined)
+      && (this.attachments.length > 0 || this.attachmentError !== undefined || this.attachmentNotice !== undefined)
     ) {
       previousScope.write(this.currentAttachmentDraft());
     }
@@ -244,6 +251,28 @@ export class PromptEditor extends LitElement {
     this.currentInputMode = inputModeForDraft(text);
     this.completions = [];
     this.selectedIndex = 0;
+  }
+
+  replaceDraft(draft: {
+    text: string;
+    restored?: readonly ChatRestoredAttachment[];
+    unrestorableImageCount?: number;
+  }): void {
+    this.replaceText(draft.text);
+    const invalid = draft.unrestorableImageCount ?? 0;
+    const restored = draft.restored ?? [];
+    if (restored.length === 0 && invalid <= 0) return;
+
+    const existing = this.attachments;
+    const merged = mergePromptAttachments(
+      existing,
+      restored.map((attachment) => ({ ...attachment, restored: true as const })),
+      () => this.attachmentDrafts.nextAttachmentId(),
+    );
+    this.attachments = merged.attachments;
+    this.attachmentNotice = formatAttachmentNotice({ invalid, omittedForCapacity: merged.omittedForCapacity });
+    if (merged.attachments.length !== existing.length) this.attachmentDeliveryOverride = undefined;
+    this.persistAttachmentDraft();
   }
 
   /** Get the underlying CM6 EditorView, or undefined if not yet mounted. */
@@ -466,18 +495,22 @@ export class PromptEditor extends LitElement {
   }
 
   private renderAttachments() {
-    if (this.attachments.length === 0 && this.attachmentError === undefined) return null;
+    if (this.attachments.length === 0 && this.attachmentError === undefined && this.attachmentNotice === undefined) return null;
     const canUseInlineDelivery = promptAttachmentsCanUseInlineDelivery(this.attachments);
     const delivery = this.effectiveAttachmentDelivery();
     const locked = this.speechInputActive();
     return html`
       <div class="attachments" aria-label="Pending attachments">
-        ${this.attachments.map((attachment) => html`
-          <div class=${`attachment-chip ${isInlinePromptAttachment(attachment) ? "attachment-chip-image" : "attachment-chip-file"}`} title=${attachment.name}>
-            ${this.renderAttachmentPreview(attachment)}
-            <button type="button" class="attachment-remove" ?disabled=${locked} title="Remove attachment" aria-label=${`Remove ${attachment.name}`} @click=${() => { this.removeAttachment(attachment.id); }}>×</button>
-          </div>
-        `)}
+        ${this.attachments.map((attachment) => {
+          const provenance = attachment.restored ? RESTORED_ATTACHMENT_PROVENANCE : undefined;
+          const label = provenance === undefined ? attachment.name : `${attachment.name} — ${provenance}`;
+          return html`
+            <div class=${`attachment-chip ${isInlinePromptAttachment(attachment) ? "attachment-chip-image" : "attachment-chip-file"}`} title=${label} aria-label=${label}>
+              ${this.renderAttachmentPreview(attachment)}
+              <button type="button" class="attachment-remove" ?disabled=${locked} title="Remove attachment" aria-label=${provenance === undefined ? `Remove ${attachment.name}` : `Remove ${attachment.name} — ${provenance}`} @click=${() => { this.removeAttachment(attachment.id); }}>×</button>
+            </div>
+          `;
+        })}
         ${this.attachments.length > 0 ? html`
           <label class="attachment-delivery" title=${canUseInlineDelivery ? "How attachments are delivered to the agent" : "General files are saved and mentioned from the workspace"}>
             <select ?disabled=${locked} .value=${delivery} @change=${(event: Event) => { this.changeDelivery(event); }}>
@@ -487,6 +520,7 @@ export class PromptEditor extends LitElement {
           </label>
         ` : null}
         ${this.attachmentError !== undefined ? html`<div class="attachment-error">${this.attachmentError}</div>` : null}
+        ${this.attachmentNotice !== undefined ? html`<div class="attachment-notice" role="status" aria-live="polite">${this.attachmentNotice}</div>` : null}
       </div>
     `;
   }
@@ -510,7 +544,9 @@ export class PromptEditor extends LitElement {
       return;
     }
     this.attachmentDelivery = requested;
+    if (this.attachments.some((attachment) => attachment.restored === true)) this.attachmentDeliveryOverride = requested;
     saveAttachmentDelivery(this.attachmentDelivery);
+    this.persistAttachmentDraft();
   }
 
   /** The active draft key, or `undefined` for the starter composer. */
@@ -530,12 +566,16 @@ export class PromptEditor extends LitElement {
     return {
       attachments: this.attachments,
       ...(this.attachmentError === undefined ? {} : { error: this.attachmentError }),
+      ...(this.attachmentDeliveryOverride === undefined ? {} : { deliveryOverride: this.attachmentDeliveryOverride }),
+      ...(this.attachmentNotice === undefined ? {} : { notice: this.attachmentNotice }),
     };
   }
 
   private adoptAttachmentDraft(draft: PromptAttachmentDraft): void {
     this.attachments = [...draft.attachments];
     this.attachmentError = draft.error;
+    this.attachmentDeliveryOverride = draft.deliveryOverride;
+    this.attachmentNotice = draft.notice;
   }
 
   /** Mirror the rendered attachment state into the active scope's stored draft. */
@@ -590,9 +630,11 @@ export class PromptEditor extends LitElement {
     if (scope === undefined) {
       this.attachmentError = undefined;
       const starter = await capturePromptAttachments(files, readFileAsBase64);
-      if (starter.attachments.length > 0) {
-        this.attachments = [...this.attachments, ...starter.attachments.map((attachment) => ({ id: this.attachmentDrafts.nextAttachmentId(), ...attachment }))];
-      }
+      const merged = mergePromptAttachments(this.attachments, starter.attachments, () => this.attachmentDrafts.nextAttachmentId());
+      this.attachments = merged.attachments;
+      this.attachmentNotice = merged.omittedForCapacity > 0
+        ? formatAttachmentNotice({ invalid: 0, omittedForCapacity: merged.omittedForCapacity })
+        : this.attachmentNotice;
       this.attachmentError = starter.error;
       return;
     }
@@ -613,7 +655,7 @@ export class PromptEditor extends LitElement {
   }
 
   private effectiveAttachmentDelivery(): PromptAttachmentDelivery {
-    return effectivePromptAttachmentDelivery(this.attachmentDelivery, this.attachments);
+    return effectivePromptAttachmentDelivery(this.attachmentDelivery, this.attachments, this.attachmentDeliveryOverride);
   }
 
   private createEditor() {
@@ -840,7 +882,9 @@ export class PromptEditor extends LitElement {
     this.attachmentScope = undefined;
     this.completions = [];
     this.attachments = [];
+    this.attachmentDeliveryOverride = undefined;
     this.attachmentError = undefined;
+    this.attachmentNotice = undefined;
     // `draft` is not reactive, so the cleared text will not flow to CodeMirror
     // via `updated()`; push it to the editor document explicitly.
     this.syncEditorDoc();

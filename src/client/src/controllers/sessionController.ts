@@ -9,6 +9,7 @@ import { ChatTranscriptStore } from "../chatTranscriptStore";
 import { isShellInput } from "../inputModes";
 import { fileCompletionInsertText } from "../promptCompletions";
 import { sameExactSelection } from "../components/sessionModelPolicyDraft";
+import type { ChatMessageEditDraft, ChatRestoredAttachment } from "../components/ChatView";
 import { SessionSocket, type GlobalSessionEvent, type SessionUiEvent } from "../sessionSocket";
 import { StreamEventBuffer, isBufferedStreamEvent } from "../streamEventBuffer";
 import { isArchivableSessionInfo, isTransientNewSessionInfo, sessionPersistenceOptionsForRuntime } from "../sessionPersistence";
@@ -58,10 +59,12 @@ export interface SessionNotificationSessionBridge {
   shouldFilterLegacyNotification(machineId: string, notificationId: string | undefined): boolean;
 }
 
-export interface PromptEditorTextReplacement {
+export interface PromptEditorDraftReplacement {
   machineId: string;
   sessionId: string;
   text: string;
+  restored?: readonly ChatRestoredAttachment[];
+  unrestorableImageCount?: number;
 }
 
 export interface SelectedSessionReady {
@@ -101,7 +104,7 @@ export interface SessionControllerDependencies {
   notifications?: SessionNotificationSessionBridge;
   /** Session-scoped composer attachment drafts, moved and cleared with text drafts. */
   attachmentDrafts?: PromptAttachmentDraftStore;
-  replacePromptEditorText?: (replacement: PromptEditorTextReplacement) => void | Promise<void>;
+  replacePromptEditorDraft?: (replacement: PromptEditorDraftReplacement) => void | Promise<void>;
   onSelectedSessionReady?: (selection: SelectedSessionReady) => void;
   onStarterModelPolicyConfirmed?: (event: StarterModelPolicyConfirmedEvent) => void;
   onStarterModelPolicySubstitution?: (event: StarterModelPolicySubstitutionEvent) => void;
@@ -236,7 +239,7 @@ export class SessionController {
   private readonly transcripts: ChatTranscriptStore;
   private readonly attachmentDrafts: PromptAttachmentDraftStore;
   private readonly notifications: SessionNotificationSessionBridge | undefined;
-  private readonly replacePromptEditorText: SessionControllerDependencies["replacePromptEditorText"];
+  private readonly replacePromptEditorDraft: SessionControllerDependencies["replacePromptEditorDraft"];
   private readonly onSelectedSessionReady: SessionControllerDependencies["onSelectedSessionReady"];
   private readonly onStarterModelPolicyConfirmed: SessionControllerDependencies["onStarterModelPolicyConfirmed"];
   private readonly onStarterModelPolicySubstitution: SessionControllerDependencies["onStarterModelPolicySubstitution"];
@@ -344,7 +347,7 @@ export class SessionController {
     this.scheduleOverloadResync = deps.scheduleOverloadResync ?? defaultOverloadResyncScheduler;
     this.maxJoinBufferedEvents = deps.maxJoinBufferedEvents ?? DEFAULT_MAX_JOIN_BUFFERED_EVENTS;
     this.notifications = deps.notifications;
-    this.replacePromptEditorText = deps.replacePromptEditorText;
+    this.replacePromptEditorDraft = deps.replacePromptEditorDraft;
     this.onSelectedSessionReady = deps.onSelectedSessionReady;
     this.onStarterModelPolicyConfirmed = deps.onStarterModelPolicyConfirmed;
     this.onStarterModelPolicySubstitution = deps.onStarterModelPolicySubstitution;
@@ -864,11 +867,11 @@ export class SessionController {
       throw error;
     }
 
-    if (!result.cancelled) await this.refreshAfterTreeNavigation(session, machineId, result.editorText ?? "", tree);
+    if (!result.cancelled) await this.refreshAfterTreeNavigation(session, machineId, { text: result.editorText ?? "" }, tree);
     return result;
   }
 
-  async editFromHere(targetId: string, editorText: string): Promise<SessionTreeNavigateResult> {
+  async editFromHere(targetId: string, draft: ChatMessageEditDraft): Promise<SessionTreeNavigateResult> {
     const state = this.getState();
     const session = state.selectedSession;
     if (session === undefined || session.archived === true || isClientPendingStartSessionInfo(session)) {
@@ -885,7 +888,13 @@ export class SessionController {
       throw error;
     }
 
-    if (!result.cancelled) await this.refreshAfterTreeNavigation(session, machineId, editorText);
+    if (!result.cancelled) {
+      await this.refreshAfterTreeNavigation(session, machineId, {
+        text: draft.text,
+        restored: draft.attachments,
+        unrestorableImageCount: draft.unrestorableImageCount,
+      });
+    }
     return result;
   }
 
@@ -916,11 +925,11 @@ export class SessionController {
   private async refreshAfterTreeNavigation(
     session: SessionInfo,
     machineId: string,
-    editorText: string,
+    draft: Pick<PromptEditorDraftReplacement, "text" | "restored" | "unrestorableImageCount">,
     tree?: AppState["treeDialog"],
   ): Promise<void> {
     const cacheKey = machineSessionKey(machineId, session.id);
-    saveDraft(cacheKey, editorText);
+    saveDraft(cacheKey, draft.text);
     this.transcripts.discard(cacheKey);
 
     // A user can reselect the same session while the request is in flight. Its
@@ -941,7 +950,7 @@ export class SessionController {
     if (!this.isSelectedSessionIdentity(session.id, machineId)) return;
 
     try {
-      await this.replacePromptEditorText?.({ machineId, sessionId: session.id, text: editorText });
+      await this.replacePromptEditorDraft?.({ machineId, sessionId: session.id, ...draft });
     } catch (error) {
       if (this.isSelectedSessionIdentity(session.id, machineId)) this.setState({ error: String(error) });
       throw error;
