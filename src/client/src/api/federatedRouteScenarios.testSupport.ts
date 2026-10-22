@@ -1,5 +1,7 @@
+import type { Workspace } from "../../../shared/apiTypes";
 import { FEDERATED_HTTP_ROUTES } from "../../../shared/federatedRoutes";
-import { piWebUiApi, sessionsApi } from "./clients";
+import { activityApi, filesApi, gitApi, piWebUiApi, projectsApi, sessionsApi, terminalsApi, workspacesApi } from "./clients";
+import { workspaceTasksApi, type WorkspaceTasksClient } from "./workspaceTasksApi";
 
 // Distribute over the tuple union; preserve method/path correlation, omit policy.
 type AllowlistedRouteKey = (typeof FEDERATED_HTTP_ROUTES)[number] extends infer R
@@ -382,10 +384,259 @@ export const sessionsScenarios = {
   }],
 } as const satisfies ScenarioTable<typeof sessionsApi>;
 
+/** Shared workspace fixture: the scenario tables and the contract test must exercise the same workspace identity. */
+export const workspace: Workspace = {
+  id: "w 1",
+  projectId: "p 1",
+  path: "/repo",
+  label: "repo",
+  isMain: true,
+  isGitRepo: true,
+  isGitWorktree: true,
+};
+
+const projectUsageRequest = { projectPath: "/repo", liveCwds: ["/repo", "/repo-feature"] };
+
+/** Project catalog, directory, and usage calls; every row must stay allowlisted on the federated proxy. */
+export const projectsScenarios = {
+  projects: [{
+    kind: "machine",
+    route: { method: "GET", path: "/projects" },
+    args: (m: string) => [m],
+  }],
+  addProject: [{
+    kind: "machine",
+    route: { method: "POST", path: "/projects" },
+    args: (m: string) => ["/repo", "Repo", false, m],
+  }],
+  closeProject: [{
+    kind: "machine",
+    route: { method: "DELETE", path: "/projects/:projectId" },
+    args: (m: string) => ["p 1", m],
+  }],
+  closeProjectTree: [{
+    kind: "machine",
+    route: { method: "POST", path: "/projects/:projectId/close-tree" },
+    args: (m: string) => ["p 1", m],
+  }],
+  pinProject: [{
+    kind: "machine",
+    route: { method: "POST", path: "/projects/:projectId/pin" },
+    args: (m: string) => ["p 1", m],
+  }],
+  unpinProject: [{
+    kind: "machine",
+    route: { method: "POST", path: "/projects/:projectId/unpin" },
+    args: (m: string) => ["p 1", m],
+  }],
+  projectDirectories: [{
+    kind: "machine",
+    route: { method: "GET", path: "/project-directories" },
+    args: (m: string) => ["/r", m],
+  }],
+  projectUsageCount: [{
+    kind: "machine",
+    route: { method: "POST", path: "/sessions/project-usage/count" },
+    args: (m: string) => [projectUsageRequest, m],
+  }],
+  projectUsage: [{
+    kind: "machine",
+    route: { method: "POST", path: "/sessions/project-usage" },
+    args: (m: string) => [projectUsageRequest, m],
+  }],
+} as const satisfies ScenarioTable<typeof projectsApi>;
+
+/** Project workspace catalog, file, and move calls; every row must stay allowlisted on the federated proxy. */
+export const workspacesScenarios = {
+  workspaces: [{
+    kind: "machine",
+    route: { method: "GET", path: "/projects/:projectId/workspaces" },
+    args: (m: string) => ["p 1", m],
+  }],
+  deleteWorkspace: [{
+    kind: "machine",
+    route: { method: "DELETE", path: "/projects/:projectId/workspaces/:workspaceId" },
+    args: (m: string) => ["p 1", "w 1", m],
+  }],
+  workspaceTree: [{
+    kind: "machine",
+    route: { method: "GET", path: "/projects/:projectId/workspaces/:workspaceId/tree" },
+    args: (m: string) => ["p 1", "w 1", "src", m],
+  }],
+  workspaceFile: [{
+    kind: "machine",
+    route: { method: "GET", path: "/projects/:projectId/workspaces/:workspaceId/file" },
+    args: (m: string) => ["p 1", "w 1", "README.md", m],
+  }],
+  writeWorkspaceFile: [{
+    kind: "machine",
+    route: { method: "PUT", path: "/projects/:projectId/workspaces/:workspaceId/file" },
+    args: (m: string) => ["p 1", "w 1", "README.md", "hello", { overwrite: false }, m],
+  }],
+  deleteWorkspaceFile: [{
+    kind: "machine",
+    route: { method: "DELETE", path: "/projects/:projectId/workspaces/:workspaceId/file" },
+    args: (m: string) => ["p 1", "w 1", "README.md", m],
+  }],
+  moveWorkspaceFile: [{
+    kind: "machine",
+    route: { method: "POST", path: "/projects/:projectId/workspaces/:workspaceId/file/move" },
+    args: (m: string) => ["p 1", "w 1", "README.md", "docs/README.md", { overwrite: false }, m],
+  }],
+} as const satisfies ScenarioTable<typeof workspacesApi>;
+
+/** Workspace terminal and command-run calls; every row must stay allowlisted on the federated proxy. */
+export const terminalsScenarios = {
+  terminals: [{
+    kind: "machine",
+    route: { method: "GET", path: "/projects/:projectId/workspaces/:workspaceId/terminals" },
+    args: (m: string) => ["p 1", "w 1", m],
+  }],
+  startTerminal: [{
+    kind: "machine",
+    route: { method: "POST", path: "/projects/:projectId/workspaces/:workspaceId/terminals" },
+    args: (m: string) => ["p 1", "w 1", { cols: 120, rows: 40 }, m],
+  }],
+  closeWorkspaceTerminals: [{
+    kind: "machine",
+    route: { method: "DELETE", path: "/projects/:projectId/workspaces/:workspaceId/terminals" },
+    args: (m: string) => ["p 1", "w 1", m],
+  }],
+  closeTerminal: [{
+    kind: "machine",
+    route: { method: "DELETE", path: "/projects/:projectId/workspaces/:workspaceId/terminals/:terminalId" },
+    args: (m: string) => ["p 1", "w 1", "t 1", m],
+  }],
+  continueTerminal: [{
+    kind: "machine",
+    route: { method: "POST", path: "/projects/:projectId/workspaces/:workspaceId/terminals/:terminalId/continue" },
+    args: (m: string) => ["p 1", "w 1", "t 1", m],
+  }],
+  runTerminalCommand: [{
+    kind: "machine",
+    route: { method: "POST", path: "/projects/:projectId/workspaces/:workspaceId/terminal-command-runs" },
+    args: (m: string) => ["core", { workspace, title: "Build", command: "npm test" }, m],
+  }],
+  listCommandRuns: [{
+    kind: "machine",
+    route: { method: "GET", path: "/terminal-command-runs" },
+    args: (m: string) => [{ projectId: "p 1", workspaceId: "w 1", statuses: ["running"], metadata: { "pi.operation": "test" } }, m],
+  }],
+  getCommandRun: [{
+    kind: "machine",
+    route: { method: "GET", path: "/terminal-command-runs/:runId" },
+    args: (m: string) => ["run 1", m],
+  }],
+  cancelCommandRun: [{
+    kind: "machine",
+    route: { method: "POST", path: "/terminal-command-runs/:runId/cancel" },
+    args: (m: string) => ["run 1", m],
+  }],
+} as const satisfies ScenarioTable<typeof terminalsApi>;
+
+/** File suggestion calls; machine-wide and workspace-scoped lookups share one method but two route shapes. */
+export const filesScenarios = {
+  files: [
+    {
+      kind: "machine",
+      route: { method: "GET", path: "/files" },
+      args: (m: string) => ["/repo", "README", { kind: "tracked", mode: "file", machineId: m }],
+    },
+    {
+      kind: "machine",
+      route: { method: "GET", path: "/projects/:projectId/workspaces/:workspaceId/files" },
+      args: (m: string) => ["/repo", "README", { kind: "tracked", mode: "file", machineId: m, projectId: "p 1", workspaceId: "w 1", workspaceScoped: true }],
+    },
+  ],
+} as const satisfies ScenarioTable<typeof filesApi>;
+
+/** Workspace git inspection calls; every row must stay allowlisted on the federated proxy. */
+export const gitScenarios = {
+  gitStatus: [{
+    kind: "machine",
+    route: { method: "GET", path: "/projects/:projectId/workspaces/:workspaceId/git/status" },
+    args: (m: string) => ["p 1", "w 1", m],
+  }],
+  gitDiff: [{
+    kind: "machine",
+    route: { method: "GET", path: "/projects/:projectId/workspaces/:workspaceId/git/diff" },
+    args: (m: string) => ["p 1", "w 1", { path: "README.md", staged: true }, m],
+  }],
+} as const satisfies ScenarioTable<typeof gitApi>;
+
+/** Workspace activity calls; every row must stay allowlisted on the federated proxy. */
+export const activityScenarios = {
+  workspaceActivity: [{
+    kind: "machine",
+    route: { method: "GET", path: "/activity" },
+    args: (m: string) => [m],
+  }],
+} as const satisfies ScenarioTable<typeof activityApi>;
+
+const workspaceTask = { id: "build", title: "Build", command: "npm run build", confirm: false };
+const workspaceTasksConfig = {
+  version: 1 as const,
+  tasks: [workspaceTask],
+};
+const workspaceTaskMove = {
+  operationId: "00000000-0000-4000-8000-000000000001",
+  intent: "start" as const,
+  source: {
+    ref: { scope: "workspace" as const, id: "build" },
+    expectedCatalog: { kind: "loaded" as const, revision: "workspace-revision", config: workspaceTasksConfig },
+  },
+  destination: {
+    scope: "global" as const,
+    expectedCatalog: { kind: "loaded" as const, revision: "global-revision", config: { version: 1 as const, tasks: [] } },
+    task: workspaceTask,
+  },
+};
+
+/** Workspace task catalog reads, writes, and moves; every row must stay allowlisted on the federated proxy. */
+export const workspaceTasksScenarios = {
+  readWorkspace: [{
+    kind: "machine",
+    route: { method: "GET", path: "/projects/:projectId/workspaces/:workspaceId/workspace-tasks" },
+    args: (m: string) => [{ projectId: "p 1", workspaceId: "w 1", machineId: m }],
+  }],
+  replaceWorkspace: [{
+    kind: "machine",
+    route: { method: "PUT", path: "/projects/:projectId/workspaces/:workspaceId/workspace-tasks" },
+    args: (m: string) => [{ projectId: "p 1", workspaceId: "w 1", machineId: m, expectedRevision: "workspace-revision", config: workspaceTasksConfig }],
+  }],
+  readGlobal: [{
+    kind: "machine",
+    route: { method: "GET", path: "/workspace-tasks/global" },
+    args: (m: string) => [m],
+  }],
+  replaceGlobal: [{
+    kind: "machine",
+    route: { method: "PUT", path: "/workspace-tasks/global" },
+    args: (m: string) => [{ machineId: m, expectedRevision: "global-revision", config: workspaceTasksConfig }],
+  }],
+  move: [{
+    kind: "machine",
+    route: { method: "POST", path: "/projects/:projectId/workspaces/:workspaceId/workspace-tasks/move" },
+    args: (m: string) => [{ projectId: "p 1", workspaceId: "w 1", machineId: m, ...workspaceTaskMove }],
+  }],
+} as const satisfies ScenarioTable<typeof workspaceTasksApi>;
+
+// `WorkspaceTasksClient` is declared as an interface, and interfaces carry no implicit string index
+// signature. This mapped view keeps every member type and the same object identity while letting the
+// namespace pass through the runner's index-signature-typed API map.
+const workspaceTasksNamespace: { readonly [K in keyof WorkspaceTasksClient]: WorkspaceTasksClient[K] } = workspaceTasksApi;
+
 /** Client namespaces converted to typed scenarios so far; later conversions extend this registry. */
 export const MACHINE_SCOPED_CLIENT_APIS = {
   piWebUiApi,
   sessionsApi,
+  projectsApi,
+  workspacesApi,
+  terminalsApi,
+  filesApi,
+  gitApi,
+  activityApi,
+  workspaceTasksApi: workspaceTasksNamespace,
 } as const;
 
 type StagedClientApiKey = keyof typeof MACHINE_SCOPED_CLIENT_APIS;
@@ -395,10 +646,24 @@ type StagedClientMethodKey<K extends StagedClientApiKey> = keyof (typeof MACHINE
 export const GATEWAY_ADDRESSED_METHODS = {
   piWebUiApi: ["piWebUiRuntime"],
   sessionsApi: [],
+  projectsApi: [],
+  workspacesApi: [],
+  terminalsApi: [],
+  filesApi: [],
+  gitApi: [],
+  activityApi: [],
+  workspaceTasksApi: [],
 } as const satisfies { readonly [K in StagedClientApiKey]: readonly StagedClientMethodKey<K>[] };
 
 /** Complete scenario table per staged namespace, checked against that namespace's own API type. */
 export const FEDERATED_ROUTE_SCENARIOS = {
   piWebUiApi: piWebUiScenarios,
   sessionsApi: sessionsScenarios,
+  projectsApi: projectsScenarios,
+  workspacesApi: workspacesScenarios,
+  terminalsApi: terminalsScenarios,
+  filesApi: filesScenarios,
+  gitApi: gitScenarios,
+  activityApi: activityScenarios,
+  workspaceTasksApi: workspaceTasksScenarios,
 } as const satisfies { readonly [K in StagedClientApiKey]: ScenarioTable<(typeof MACHINE_SCOPED_CLIENT_APIS)[K]> };
