@@ -106,7 +106,7 @@
     "typescript-eslint": "^8.63.0",
     "vite": "^8.1.4",
     "vite-plugin-static-copy": "^4.1.1",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.12"
   },
   "publishConfig": {
     "access": "public"
