@@ -697,6 +697,24 @@ Execute this ordered sequence during implementation. This drafting task does not
 | 10 | Run `npm run verify:fast` with no concurrent full suite or heavy job. | Exit 0 for typecheck, lint, Knip, and the fast test suite. The new test-support module is imported and exposes no unused exports. |
 | 11 | Inspect `git status --short` and the final diff. | Implementation changes are limited to the six files in §1; no server handler/client logic/parser/UI/documentation changes, reverse route checks, capability flags, or probe remnants. Preserve unrelated pre-existing work. |
 
+### 13.1 Red-phase reconciliation with green commits
+
+Order 1 assumes one working session in which the fixture declarations are written
+before the allowlist entries exist, so `npm run typecheck` reports the five missing
+routes in a single red observation.
+
+When this specification is executed by a deterministic controller whose tasks must each
+leave the repository green, that intermediate state cannot be committed. The equivalent
+evidence is then produced by the missing-route mutation probe in plan Task 11: remove one
+added entry, run `npm run typecheck`, and require an assignability error naming that
+path (for example `/sessions/:sessionId/pin`), then restore the entry byte-for-byte.
+The probe is repeatable and permanent, and it demonstrates the same property order 1
+demonstrates — a fixture cannot claim a route the allowlist does not contain.
+
+Either path satisfies the design. What is not acceptable is claiming red-phase evidence
+from Vitest transpilation, or shipping without ever having observed the typecheck
+rejection.
+
 Do not run package builds, publish, create a release, or restart services as part of these acceptance steps. Follow the repository's separate serial `npm run verify` gate when a later merge/release task requires it; that is not a replacement for the red evidence above.
 
 ## 14. Traceability
