@@ -1,6 +1,6 @@
 import type { ModelTierLadder, Workspace } from "../../../shared/apiTypes";
 import { FEDERATED_HTTP_ROUTES } from "../../../shared/federatedRoutes";
-import { activityApi, configApi, filesApi, gitApi, modelTiersApi, modelsConfigApi, piWebUiApi, projectsApi, sessionsApi, terminalsApi, utilityModelsApi, workspacesApi } from "./clients";
+import { activityApi, configApi, filesApi, gitApi, learnedSkillsApi, memoryApi, modelTiersApi, modelsConfigApi, piPackagePluginsApi, piPackagesApi, piWebUiApi, pluginsApi, projectsApi, recentProjectsApi, sessionsApi, skillsConfigApi, terminalsApi, utilityModelsApi, workspacesApi } from "./clients";
 import { workspaceTasksApi, type WorkspaceTasksClient } from "./workspaceTasksApi";
 
 // Distribute over the tuple union; preserve method/path correlation, omit policy.
@@ -709,14 +709,131 @@ export const utilityModelsScenarios = {
   }],
 } as const satisfies ScenarioTable<typeof utilityModelsApi>;
 
+/** Skills catalog, toggle, search, install, check, and update calls; every row must stay allowlisted on the federated proxy. */
+export const skillsConfigScenarios = {
+  list: [{
+    kind: "machine",
+    route: { method: "GET", path: "/skills" },
+    args: (m: string) => ["/repo", m],
+  }],
+  toggle: [{
+    kind: "machine",
+    route: { method: "PATCH", path: "/skills" },
+    args: (m: string) => [{ cwd: "/repo", filePath: "/repo/.pi/skills/testing/SKILL.md", disableModelInvocation: true }, m],
+  }],
+  search: [{
+    kind: "machine",
+    route: { method: "POST", path: "/skills/search" },
+    args: (m: string) => [{ query: "testing", limit: 12 }, m],
+  }],
+  install: [{
+    kind: "machine",
+    route: { method: "POST", path: "/skills/install" },
+    args: (m: string) => [{ cwd: "/repo", package: "owner/repo@testing", scope: "project" }, m],
+  }],
+  check: [{
+    kind: "machine",
+    route: { method: "POST", path: "/skills/check" },
+    args: (m: string) => [{ cwd: "/repo", package: "owner/repo@testing", scope: "project" }, m],
+  }],
+  update: [{
+    kind: "machine",
+    route: { method: "POST", path: "/skills/update" },
+    args: (m: string) => [{ cwd: "/repo", package: "owner/repo@testing", scope: "project" }, m],
+  }],
+} as const satisfies ScenarioTable<typeof skillsConfigApi>;
+
+/** Pi package catalog and mutation calls; every row must stay allowlisted on the federated proxy. */
+export const piPackagesScenarios = {
+  packages: [{
+    kind: "machine",
+    route: { method: "GET", path: "/pi-packages" },
+    args: (m: string) => [m],
+  }],
+  install: [{
+    kind: "machine",
+    route: { method: "POST", path: "/pi-packages/install" },
+    args: (m: string) => ["npm:@acme/tools", m],
+  }],
+  remove: [{
+    kind: "machine",
+    route: { method: "POST", path: "/pi-packages/remove" },
+    args: (m: string) => ["npm:@acme/tools", "user", m],
+  }],
+  update: [{
+    kind: "machine",
+    route: { method: "POST", path: "/pi-packages/update" },
+    args: (m: string) => ["npm:@acme/tools", m],
+  }],
+} as const satisfies ScenarioTable<typeof piPackagesApi>;
+
+/** Package plugin catalog and mutation calls; every row must stay allowlisted on the federated proxy. */
+export const piPackagePluginsScenarios = {
+  list: [{
+    kind: "machine",
+    route: { method: "GET", path: "/package-plugins" },
+    args: (m: string) => ["/repo", m],
+  }],
+  mutate: [{
+    kind: "machine",
+    route: { method: "POST", path: "/package-plugins" },
+    args: (m: string) => [{ action: "install", source: "npm:@acme/tools", scope: "project", cwd: "/repo" }, m],
+  }],
+} as const satisfies ScenarioTable<typeof piPackagePluginsApi>;
+
+/** Project memory snapshot reads; every row must stay allowlisted on the federated proxy. */
+export const memoryScenarios = {
+  snapshot: [{
+    kind: "machine",
+    route: { method: "GET", path: "/agent-memory/snapshot" },
+    args: (m: string) => [workspace.path, m],
+  }],
+} as const satisfies ScenarioTable<typeof memoryApi>;
+
+/** Learned-skill snapshot reads; every row must stay allowlisted on the federated proxy. */
+export const learnedSkillsScenarios = {
+  snapshot: [{
+    kind: "machine",
+    route: { method: "GET", path: "/agent-skills/snapshot" },
+    args: (m: string) => [workspace.path, m],
+  }],
+} as const satisfies ScenarioTable<typeof learnedSkillsApi>;
+
+/** PI WEBUI plugin catalog reads; every row must stay allowlisted on the federated proxy. */
+export const pluginsScenarios = {
+  plugins: [{
+    kind: "machine",
+    route: { method: "GET", path: "/plugins" },
+    args: (m: string) => [m],
+  }],
+} as const satisfies ScenarioTable<typeof pluginsApi>;
+
+/** Recent-project history reads and writes; every row must stay allowlisted on the federated proxy. */
+export const recentProjectsScenarios = {
+  recentProjects: [{
+    kind: "machine",
+    route: { method: "GET", path: "/recent-projects" },
+    args: (m: string) => [m],
+  }],
+  recordRecentProject: [{
+    kind: "machine",
+    route: { method: "POST", path: "/projects/:projectId/recent" },
+    args: (m: string) => ["p 1", m],
+  }],
+  removeRecentProject: [{
+    kind: "machine",
+    route: { method: "DELETE", path: "/recent-projects/:entryId" },
+    args: (m: string) => ["recent 1", m],
+  }],
+} as const satisfies ScenarioTable<typeof recentProjectsApi>;
+
 // `WorkspaceTasksClient` is declared as an interface, and interfaces carry no implicit string index
 // signature. This mapped view keeps every member type and the same object identity while letting the
 // namespace pass through the runner's index-signature-typed API map.
 const workspaceTasksNamespace: { readonly [K in keyof WorkspaceTasksClient]: WorkspaceTasksClient[K] } = workspaceTasksApi;
 
-/** Client namespaces converted to typed scenarios so far; later conversions extend this registry. */
+/** Every machine-scoped client namespace, in inventory order; each one has a complete scenario table below. */
 export const MACHINE_SCOPED_CLIENT_APIS = {
-  piWebUiApi,
   sessionsApi,
   projectsApi,
   workspacesApi,
@@ -724,11 +841,19 @@ export const MACHINE_SCOPED_CLIENT_APIS = {
   filesApi,
   gitApi,
   activityApi,
-  workspaceTasksApi: workspaceTasksNamespace,
+  piWebUiApi,
   configApi,
   modelsConfigApi,
   modelTiersApi,
   utilityModelsApi,
+  skillsConfigApi,
+  piPackagesApi,
+  piPackagePluginsApi,
+  memoryApi,
+  learnedSkillsApi,
+  pluginsApi,
+  recentProjectsApi,
+  workspaceTasksApi: workspaceTasksNamespace,
 } as const;
 
 type StagedClientApiKey = keyof typeof MACHINE_SCOPED_CLIENT_APIS;
@@ -736,7 +861,6 @@ type StagedClientMethodKey<K extends StagedClientApiKey> = keyof (typeof MACHINE
 
 /** Methods of each staged namespace that must reach the gateway instead of a selected machine. */
 export const GATEWAY_ADDRESSED_METHODS = {
-  piWebUiApi: ["piWebUiRuntime"],
   sessionsApi: [],
   projectsApi: [],
   workspacesApi: [],
@@ -744,16 +868,23 @@ export const GATEWAY_ADDRESSED_METHODS = {
   filesApi: [],
   gitApi: [],
   activityApi: [],
-  workspaceTasksApi: [],
+  piWebUiApi: ["piWebUiRuntime"],
   configApi: [],
   modelsConfigApi: [],
   modelTiersApi: [],
   utilityModelsApi: [],
+  skillsConfigApi: [],
+  piPackagesApi: [],
+  piPackagePluginsApi: [],
+  memoryApi: [],
+  learnedSkillsApi: [],
+  pluginsApi: [],
+  recentProjectsApi: [],
+  workspaceTasksApi: [],
 } as const satisfies { readonly [K in StagedClientApiKey]: readonly StagedClientMethodKey<K>[] };
 
 /** Complete scenario table per staged namespace, checked against that namespace's own API type. */
 export const FEDERATED_ROUTE_SCENARIOS = {
-  piWebUiApi: piWebUiScenarios,
   sessionsApi: sessionsScenarios,
   projectsApi: projectsScenarios,
   workspacesApi: workspacesScenarios,
@@ -761,9 +892,17 @@ export const FEDERATED_ROUTE_SCENARIOS = {
   filesApi: filesScenarios,
   gitApi: gitScenarios,
   activityApi: activityScenarios,
-  workspaceTasksApi: workspaceTasksScenarios,
+  piWebUiApi: piWebUiScenarios,
   configApi: configScenarios,
   modelsConfigApi: modelsConfigScenarios,
   modelTiersApi: modelTiersScenarios,
   utilityModelsApi: utilityModelsScenarios,
+  skillsConfigApi: skillsConfigScenarios,
+  piPackagesApi: piPackagesScenarios,
+  piPackagePluginsApi: piPackagePluginsScenarios,
+  memoryApi: memoryScenarios,
+  learnedSkillsApi: learnedSkillsScenarios,
+  pluginsApi: pluginsScenarios,
+  recentProjectsApi: recentProjectsScenarios,
+  workspaceTasksApi: workspaceTasksScenarios,
 } as const satisfies { readonly [K in StagedClientApiKey]: ScenarioTable<(typeof MACHINE_SCOPED_CLIENT_APIS)[K]> };
