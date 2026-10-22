@@ -53,7 +53,7 @@ describe("chat message normalization", () => {
 
   it("falls back to a placeholder for image content without data", () => {
     expect(normalizeMessage({ role: "user", content: [{ type: "image", mimeType: "image/png" }] })).toEqual([
-      { role: "user", parts: [{ type: "text", text: "[image]" }] },
+      { role: "user", parts: [{ type: "text", text: "[image]", missingImage: true }] },
     ]);
   });
 

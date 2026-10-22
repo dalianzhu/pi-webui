@@ -85,6 +85,7 @@ import "./ChatView";
 import type { ChatView } from "./ChatView";
 import "./PromptEditor";
 import type { PromptEditor } from "./PromptEditor";
+import type { ChatMessageEditDraft } from "./ChatView";
 import "./CommandPicker";
 import "./ActionPalette";
 import "./AuthDialog";
@@ -269,10 +270,18 @@ export class PiWebUiApp extends LitElement {
       onSelectedSessionReady: ({ machineId, session }) => {
         void this.commitReadyChatAfterRender(machineId, session);
       },
-      replacePromptEditorText: async ({ machineId, sessionId, text }) => {
+      replacePromptEditorDraft: async ({ machineId, sessionId, text, restored, unrestorableImageCount }) => {
         await this.updateComplete;
         if (selectedMachineId(this.state) !== machineId || this.state.selectedSession?.id !== sessionId) return;
-        this.promptEditor?.replaceText(text);
+        if (restored === undefined && unrestorableImageCount === undefined) {
+          this.promptEditor?.replaceText(text);
+          return;
+        }
+        this.promptEditor?.replaceDraft({
+          text,
+          ...(restored === undefined ? {} : { restored }),
+          ...(unrestorableImageCount === undefined ? {} : { unrestorableImageCount }),
+        });
       },
       onStarterModelPolicyConfirmed: (event) => { this.handleStarterModelPolicyConfirmed(event); },
       onStarterModelPolicySubstitution: (event) => { this.handleStarterModelPolicySubstitution(event); },
@@ -4625,11 +4634,11 @@ export class PiWebUiApp extends LitElement {
     void this.sessions.clearServerQueue();
   };
 
-  private readonly handleEditFromHere = async (assistantEntryId: string, editorText: string): Promise<void> => {
+  private readonly handleEditFromHere = async (assistantEntryId: string, draft: ChatMessageEditDraft): Promise<void> => {
     const originMachineId = selectedMachineId(this.state);
     const originSessionId = this.state.selectedSession?.id;
     try {
-      const result = await this.sessions.editFromHere(assistantEntryId, editorText);
+      const result = await this.sessions.editFromHere(assistantEntryId, draft);
       if (!result.cancelled
         && originSessionId !== undefined
         && selectedMachineId(this.state) === originMachineId

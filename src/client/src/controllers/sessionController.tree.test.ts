@@ -87,7 +87,7 @@ describe("SessionController session tree navigation", () => {
     let messageCalls = 0;
     let statusCalls = 0;
     const navigationCalls: unknown[] = [];
-    const replacePromptEditorText = vi.fn();
+    const replacePromptEditorDraft = vi.fn();
     const socket = new EmitSocket();
     let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, selectedSession: oldSession, sessions: [oldSession] };
     const api: typeof defaultApi = {
@@ -120,7 +120,7 @@ describe("SessionController session tree navigation", () => {
       (patch) => { state = { ...state, ...patch }; },
       () => undefined,
       new InMemorySessionSelectionMemory(),
-      { api, socket, transcripts, replacePromptEditorText },
+      { api, socket, transcripts, replacePromptEditorDraft },
     );
 
     await controller.selectSession(oldSession, { updateUrl: false });
@@ -151,7 +151,7 @@ describe("SessionController session tree navigation", () => {
     expect(state.messages).toEqual([{ role: "assistant", parts: [{ type: "text", text: "fresh branch" }] }]);
     expect(state.treeDialog).toBeUndefined();
     expect(loadDraft(cacheKey)).toBe("edit original prompt");
-    expect(replacePromptEditorText).toHaveBeenCalledWith({ machineId: "local", sessionId: oldSession.id, text: "edit original prompt" });
+    expect(replacePromptEditorDraft).toHaveBeenCalledExactlyOnceWith({ machineId: "local", sessionId: oldSession.id, text: "edit original prompt" });
     expect(socket.connectedSessionIds).toEqual([oldSession.id, oldSession.id]);
   });
 
@@ -164,7 +164,7 @@ describe("SessionController session tree navigation", () => {
       sessions: [oldSession],
       treeDialog: tree,
     };
-    const replacePromptEditorText = vi.fn();
+    const replacePromptEditorDraft = vi.fn();
     const messages = vi.fn<typeof defaultApi.messages>(() => authoritativePage.promise);
     const api: typeof defaultApi = {
       ...defaultApi,
@@ -179,18 +179,18 @@ describe("SessionController session tree navigation", () => {
       (patch) => { state = { ...state, ...patch }; },
       () => undefined,
       undefined,
-      { api, socket: new FakeSocket(), replacePromptEditorText },
+      { api, socket: new FakeSocket(), replacePromptEditorDraft },
     );
 
     const navigation = controller.navigateTree("root", { mode: "none" });
     await vi.waitFor(() => { expect(messages).toHaveBeenCalledOnce(); });
     expect(state.treeDialog).toBe(tree);
-    expect(replacePromptEditorText).not.toHaveBeenCalled();
+    expect(replacePromptEditorDraft).not.toHaveBeenCalled();
 
     authoritativePage.resolve(page("authoritative branch", 1));
     await navigation;
 
-    expect(replacePromptEditorText).toHaveBeenCalledWith({ machineId: "local", sessionId: oldSession.id, text: "edit after refresh" });
+    expect(replacePromptEditorDraft).toHaveBeenCalledWith({ machineId: "local", sessionId: oldSession.id, text: "edit after refresh" });
     expect(state.treeDialog).toBeUndefined();
   });
 
@@ -203,7 +203,7 @@ describe("SessionController session tree navigation", () => {
       sessions: [oldSession],
       treeDialog: tree,
     };
-    const replacePromptEditorText = vi.fn();
+    const replacePromptEditorDraft = vi.fn();
     const api: typeof defaultApi = {
       ...defaultApi,
       navigateTree: () => Promise.resolve({ cancelled: false, editorText: "recovered draft" }),
@@ -217,7 +217,7 @@ describe("SessionController session tree navigation", () => {
       (patch) => { state = { ...state, ...patch }; },
       () => undefined,
       undefined,
-      { api, socket: new FakeSocket(), replacePromptEditorText },
+      { api, socket: new FakeSocket(), replacePromptEditorDraft },
     );
 
     await expect(controller.navigateTree("root", { mode: "none" })).rejects.toThrow("authoritative history refresh failed");
@@ -225,7 +225,7 @@ describe("SessionController session tree navigation", () => {
     expect(state.treeDialog).toBe(tree);
     expect(state.error).toContain("authoritative history refresh failed");
     expect(loadDraft(cacheKey)).toBe("recovered draft");
-    expect(replacePromptEditorText).toHaveBeenCalledWith({ machineId: "local", sessionId: oldSession.id, text: "recovered draft" });
+    expect(replacePromptEditorDraft).toHaveBeenCalledWith({ machineId: "local", sessionId: oldSession.id, text: "recovered draft" });
   });
 
   it("retains the navigator when live prompt-editor replacement fails", async () => {
@@ -236,7 +236,7 @@ describe("SessionController session tree navigation", () => {
       sessions: [oldSession],
       treeDialog: tree,
     };
-    const replacePromptEditorText = vi.fn(() => Promise.reject(new Error("prompt editor replacement failed")));
+    const replacePromptEditorDraft = vi.fn(() => Promise.reject(new Error("prompt editor replacement failed")));
     const api: typeof defaultApi = {
       ...defaultApi,
       navigateTree: () => Promise.resolve({ cancelled: false, editorText: "recovered draft" }),
@@ -250,7 +250,7 @@ describe("SessionController session tree navigation", () => {
       (patch) => { state = { ...state, ...patch }; },
       () => undefined,
       undefined,
-      { api, socket: new FakeSocket(), replacePromptEditorText },
+      { api, socket: new FakeSocket(), replacePromptEditorDraft },
     );
 
     await expect(controller.navigateTree("root", { mode: "none" })).rejects.toThrow("prompt editor replacement failed");
@@ -264,7 +264,7 @@ describe("SessionController session tree navigation", () => {
     const cacheKey = machineSessionKey("local", oldSession.id);
     saveDraft(cacheKey, "stale editor text");
     let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, selectedSession: oldSession, sessions: [oldSession], treeDialog: tree };
-    const replacePromptEditorText = vi.fn();
+    const replacePromptEditorDraft = vi.fn();
     const api: typeof defaultApi = {
       ...defaultApi,
       navigateTree: () => Promise.resolve({ cancelled: false }),
@@ -278,13 +278,13 @@ describe("SessionController session tree navigation", () => {
       (patch) => { state = { ...state, ...patch }; },
       () => undefined,
       undefined,
-      { api, socket: new FakeSocket(), replacePromptEditorText },
+      { api, socket: new FakeSocket(), replacePromptEditorDraft },
     );
 
     await controller.navigateTree("leaf-1", { mode: "none" });
 
     expect(loadDraft(cacheKey)).toBe("");
-    expect(replacePromptEditorText).toHaveBeenCalledWith({ machineId: "local", sessionId: oldSession.id, text: "" });
+    expect(replacePromptEditorDraft).toHaveBeenCalledWith({ machineId: "local", sessionId: oldSession.id, text: "" });
   });
 
   it("retains the tree on cancellation and errors and exposes abort and close lifecycle methods", async () => {
@@ -342,7 +342,7 @@ describe("SessionController session tree navigation", () => {
   it("does not reopen a disposed controller when navigation settles late", async () => {
     const navigationResult = deferred<{ cancelled: false; editorText: string }>();
     const messages = vi.fn<typeof defaultApi.messages>(() => Promise.resolve(page("must not load", 1)));
-    const replacePromptEditorText = vi.fn();
+    const replacePromptEditorDraft = vi.fn();
     let state: AppState = {
       ...initialAppState(),
       selectedWorkspace: workspace,
@@ -356,7 +356,7 @@ describe("SessionController session tree navigation", () => {
       (patch) => { state = { ...state, ...patch }; },
       () => undefined,
       undefined,
-      { api, socket: new FakeSocket(), replacePromptEditorText },
+      { api, socket: new FakeSocket(), replacePromptEditorDraft },
     );
 
     const navigation = controller.navigateTree("root", { mode: "none" });
@@ -365,12 +365,12 @@ describe("SessionController session tree navigation", () => {
     await navigation;
 
     expect(messages).not.toHaveBeenCalled();
-    expect(replacePromptEditorText).not.toHaveBeenCalled();
+    expect(replacePromptEditorDraft).not.toHaveBeenCalled();
   });
 
   it("refreshes authoritatively when the same session is reselected before navigation completes", async () => {
     const navigationResult = deferred<{ cancelled: false; editorText: string }>();
-    const replacePromptEditorText = vi.fn();
+    const replacePromptEditorDraft = vi.fn();
     let messageCalls = 0;
     let state: AppState = {
       ...initialAppState(),
@@ -395,7 +395,7 @@ describe("SessionController session tree navigation", () => {
       (patch) => { state = { ...state, ...patch }; },
       () => undefined,
       undefined,
-      { api, socket: new FakeSocket(), replacePromptEditorText },
+      { api, socket: new FakeSocket(), replacePromptEditorDraft },
     );
 
     const navigation = controller.navigateTree("root", { mode: "none" });
@@ -405,12 +405,12 @@ describe("SessionController session tree navigation", () => {
 
     expect(messageCalls).toBe(2);
     expect(state.messages).toEqual([{ role: "assistant", parts: [{ type: "text", text: "authoritative branch" }] }]);
-    expect(replacePromptEditorText).toHaveBeenCalledWith({ machineId: "local", sessionId: oldSession.id, text: "recovered draft" });
+    expect(replacePromptEditorDraft).toHaveBeenCalledWith({ machineId: "local", sessionId: oldSession.id, text: "recovered draft" });
   });
 
   it("replaces live editor text when the same session is reselected during the authoritative refresh", async () => {
     const firstRefresh = deferred<MessagePage>();
-    const replacePromptEditorText = vi.fn();
+    const replacePromptEditorDraft = vi.fn();
     let messageCalls = 0;
     let state: AppState = {
       ...initialAppState(),
@@ -435,7 +435,7 @@ describe("SessionController session tree navigation", () => {
       (patch) => { state = { ...state, ...patch }; },
       () => undefined,
       undefined,
-      { api, socket: new FakeSocket(), replacePromptEditorText },
+      { api, socket: new FakeSocket(), replacePromptEditorDraft },
     );
 
     const navigation = controller.navigateTree("root", { mode: "none" });
@@ -446,7 +446,7 @@ describe("SessionController session tree navigation", () => {
 
     expect(messageCalls).toBe(2);
     expect(state.messages).toEqual([{ role: "assistant", parts: [{ type: "text", text: "reselected authoritative branch" }] }]);
-    expect(replacePromptEditorText).toHaveBeenCalledWith({ machineId: "local", sessionId: oldSession.id, text: "recovered draft" });
+    expect(replacePromptEditorDraft).toHaveBeenCalledWith({ machineId: "local", sessionId: oldSession.id, text: "recovered draft" });
   });
 
   it("discards only the originating cache and does not refresh or replace another session after a selection race", async () => {
@@ -459,7 +459,7 @@ describe("SessionController session tree navigation", () => {
       [replacementCacheKey, page("replacement cached", 1)],
     ]);
     const removedKeys: string[] = [];
-    const replacePromptEditorText = vi.fn();
+    const replacePromptEditorDraft = vi.fn();
     const requestedMessages: string[] = [];
     let state: AppState = {
       ...initialAppState(),
@@ -489,7 +489,7 @@ describe("SessionController session tree navigation", () => {
       (patch) => { state = { ...state, ...patch }; },
       () => undefined,
       undefined,
-      { api, socket: new FakeSocket(), transcripts, replacePromptEditorText },
+      { api, socket: new FakeSocket(), transcripts, replacePromptEditorDraft },
     );
 
     const navigation = controller.navigateTree("root", { mode: "none" });
@@ -504,7 +504,7 @@ describe("SessionController session tree navigation", () => {
     expect(removedKeys).toEqual([oldCacheKey]);
     expect(cachedPages.get(replacementCacheKey)).toEqual(page("replacement authoritative", 1));
     expect(loadDraft(oldCacheKey)).toBe("originating draft");
-    expect(replacePromptEditorText).not.toHaveBeenCalled();
+    expect(replacePromptEditorDraft).not.toHaveBeenCalled();
   });
 
   it("does not open a delayed tree snapshot for the same session id on a different machine", async () => {

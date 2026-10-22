@@ -1,12 +1,17 @@
+import type { PromptAttachmentDelivery } from "../../shared/apiTypes";
+import { formatAttachmentNotice } from "./attachmentNotice";
+import { mergePromptAttachments } from "./promptAttachmentMerge";
 import type { CapturedAttachment } from "./promptAttachmentCapture";
 
 /** A captured attachment plus the id the chip UI uses to address it. */
-export type PendingAttachment = CapturedAttachment & { id: string };
+export type PendingAttachment = CapturedAttachment & { id: string; restored?: true };
 
 /** One session's unsent composer attachments and its last read failure. */
 export interface PromptAttachmentDraft {
   attachments: readonly PendingAttachment[];
   error?: string;
+  deliveryOverride?: PromptAttachmentDelivery;
+  notice?: string;
 }
 
 /**
@@ -155,24 +160,18 @@ export class PromptAttachmentDraftStore {
 
   private readScope(scope: DraftScopeState): PromptAttachmentDraft {
     if (!scope.valid || scope.draft === undefined) return { attachments: [] };
-    return {
-      attachments: [...scope.draft.attachments],
-      ...(scope.draft.error === undefined ? {} : { error: scope.draft.error }),
-    };
+    return copyDraft(scope.draft);
   }
 
   private writeScope(scope: DraftScopeState, draft: PromptAttachmentDraft): void {
     if (!scope.valid) return;
     // An empty draft holds no user intent, so release its captured bytes. An
-    // error-only draft still does, and must survive to stay visible.
-    if (draft.attachments.length === 0 && draft.error === undefined) {
+    // error-only or notice-only draft still does, and must survive to stay visible.
+    if (draft.attachments.length === 0 && draft.error === undefined && draft.notice === undefined) {
       scope.draft = undefined;
       return;
     }
-    scope.draft = {
-      attachments: [...draft.attachments],
-      ...(draft.error === undefined ? {} : { error: draft.error }),
-    };
+    scope.draft = copyDraft(draft);
   }
 
   private completeCapture(
@@ -182,12 +181,15 @@ export class PromptAttachmentDraftStore {
   ): PromptAttachmentDraft | undefined {
     if (!scope.valid) return undefined;
     const existing = scope.draft?.attachments ?? [];
+    const mergedAttachments = mergePromptAttachments(existing, attachments, () => this.nextAttachmentId());
+    const notice = mergedAttachments.omittedForCapacity > 0
+      ? formatAttachmentNotice({ invalid: 0, omittedForCapacity: mergedAttachments.omittedForCapacity })
+      : scope.draft?.notice;
     const merged: PromptAttachmentDraft = {
-      attachments: [
-        ...existing,
-        ...attachments.map((attachment) => ({ id: this.nextAttachmentId(), ...attachment })),
-      ],
+      attachments: mergedAttachments.attachments,
       ...(error === undefined ? {} : { error }),
+      ...(scope.draft?.deliveryOverride === undefined ? {} : { deliveryOverride: scope.draft.deliveryOverride }),
+      ...(notice === undefined ? {} : { notice }),
     };
     this.writeScope(scope, merged);
     return this.readScope(scope);
@@ -211,3 +213,12 @@ export class PromptAttachmentDraftStore {
 
 /** Shared store for the app's lifetime; drafts end when the page unloads. */
 export const promptAttachmentDrafts = new PromptAttachmentDraftStore();
+
+function copyDraft(draft: PromptAttachmentDraft): PromptAttachmentDraft {
+  return {
+    attachments: draft.attachments.map((attachment) => ({ ...attachment })),
+    ...(draft.error === undefined ? {} : { error: draft.error }),
+    ...(draft.deliveryOverride === undefined ? {} : { deliveryOverride: draft.deliveryOverride }),
+    ...(draft.notice === undefined ? {} : { notice: draft.notice }),
+  };
+}

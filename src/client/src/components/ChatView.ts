@@ -38,6 +38,8 @@ import {
   type SelectedSessionNotificationView,
   type SessionNotificationTarget,
 } from "../sessionNotifications";
+import { extensionForImageMimeType } from "../../../shared/promptAttachments";
+import { decodeStrictBase64, isStructurallyCompleteImage } from "../../../shared/imageStructure";
 import type { ChatLine, ChatPart } from "./shared";
 import { chatStyles, renderSessionWarningIcon } from "./shared";
 import "./ChatMinimap";
@@ -358,12 +360,46 @@ export function chatAssistantSpeechAction(
   };
 }
 
-/** Text restored to the composer by "Edit from here"; image parts intentionally remain attachments only. */
-export function chatMessageEditText(message: ChatLine): string {
-  return message.parts
-    .filter((part): part is Extract<ChatPart, { type: "text" }> => part.type === "text")
-    .map((part) => part.text)
-    .join("\n");
+export interface ChatRestoredAttachment {
+  kind: "image";
+  name: string;
+  mimeType: string;
+  data: string;
+  size: number;
+}
+
+export interface ChatMessageEditDraft {
+  text: string;
+  attachments: readonly ChatRestoredAttachment[];
+  unrestorableImageCount: number;
+}
+
+/** Project a user message into the text and inline images restored by "Edit from here". */
+export function chatMessageEditDraft(message: ChatLine): ChatMessageEditDraft {
+  const textParts: string[] = [];
+  const attachments: ChatRestoredAttachment[] = [];
+  let unrestorableImageCount = 0;
+  for (const part of message.parts) {
+    if (part.type === "text") {
+      textParts.push(part.text);
+      if (part.missingImage === true) unrestorableImageCount += 1;
+      continue;
+    }
+    if (part.type !== "image") continue;
+    const bytes = decodeStrictBase64(part.data);
+    if (bytes === undefined || !isStructurallyCompleteImage(bytes, part.mimeType)) {
+      unrestorableImageCount += 1;
+      continue;
+    }
+    attachments.push({
+      kind: "image",
+      name: `message.${extensionForImageMimeType(part.mimeType)}`,
+      mimeType: part.mimeType,
+      data: part.data,
+      size: bytes.byteLength,
+    });
+  }
+  return { text: textParts.join("\n"), attachments, unrestorableImageCount };
 }
 
 function formatMessageTimestamp(timestamp: string): string | undefined {
@@ -402,7 +438,7 @@ export class ChatView extends LitElement {
   @property({ attribute: false }) notificationInbox?: SelectedSessionNotificationView;
   @property({ type: Boolean }) canClearServerQueue = false;
   @property({ type: Boolean }) canMessageActions = false;
-  @property({ attribute: false }) onEditFromHere?: (assistantEntryId: string, editorText: string) => void | Promise<void>;
+  @property({ attribute: false }) onEditFromHere?: (assistantEntryId: string, draft: ChatMessageEditDraft) => void | Promise<void>;
   @property({ attribute: false }) onForkFromHere?: (userEntryId: string) => void | Promise<void>;
   @property({ attribute: false }) hostSpeechStatus?: HostSpeechStatus;
   @property() activeHostSpeechMessageKey = "";
@@ -1340,7 +1376,7 @@ export class ChatView extends LitElement {
             </button>
           ` : null}
           ${editEntryId === undefined ? null : html`
-            <button type="button" class="msg-action msg-history-action" data-message-action="edit-from-here" title="Edit from here — branches within this session" @click=${() => { void this.editFromHere(editEntryId, chatMessageEditText(message)); }}>
+            <button type="button" class="msg-action msg-history-action" data-message-action="edit-from-here" title="Edit from here — branches within this session" @click=${() => { void this.editFromHere(editEntryId, chatMessageEditDraft(message)); }}>
               <svg class="msg-history-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <polyline points="15 10 20 15 15 20"></polyline>
                 <path d="M4 4v7a4 4 0 0 0 4 4h12"></path>
@@ -1410,8 +1446,8 @@ export class ChatView extends LitElement {
       || (this.status?.pendingMessageCount ?? this.pendingMessageCount) > 0;
   }
 
-  private async editFromHere(assistantEntryId: string, editorText: string): Promise<void> {
-    await this.onEditFromHere?.(assistantEntryId, editorText);
+  private async editFromHere(assistantEntryId: string, draft: ChatMessageEditDraft): Promise<void> {
+    await this.onEditFromHere?.(assistantEntryId, draft);
   }
 
   private async forkFromHere(userEntryId: string): Promise<void> {

@@ -103,6 +103,7 @@
             <a href="#laptop-or-server">Laptop or server?</a>
             <a href="#plugins">Can I use local plugins?</a>
             <a href="#sessions-stop">Sessions stop unexpectedly</a>
+            <a href="#edit-from-here-attachments">Do Edit from here actions restore attachments?</a>
             <a href="#lightweight-model-session">Session started on the lightweight model</a>
             <a href="#speech-input">Dictation is unavailable, or speech input fails</a>
             <a href="#speech-input-privacy">Where does dictated audio go?</a>
@@ -329,6 +330,26 @@
                 <pre id="session-logs"><code><span class="prompt">$</span> pi-webui status
 <span class="prompt">$</span> pi-webui logs</code></pre>
               </div>
+            </article>
+
+            <article id="edit-from-here-attachments" class="faq-item">
+              <h2>Do Edit from here actions restore attachments?</h2>
+              <p>
+                Yes. When you use <strong>Edit from here</strong> on a message, PI WEBUI restores the inline images it
+                can reconstruct into the composer alongside the message text. The copy kept in the transcript may be a
+                resized version of the original file, so the restored attachment is the transcript copy rather than a
+                promise of the original file bytes.
+              </p>
+              <p>
+                If an image is missing, truncated, or cannot be restored, the composer keeps the text and announces how
+                many images could not be restored. The attachment limit is reported in the same notice when the restored set would exceed the maximum.
+              </p>
+              <p>
+                Restoration is guaranteed while the same session remains selected during the action. If you reselect a
+                session or machine while the navigation is still in flight, PI WEBUI follows its existing draft behavior:
+                it does not apply that in-flight edit to the composer. Run <strong>Edit from here</strong> again after
+                the intended session is selected.
+              </p>
             </article>
 
             <article id="lightweight-model-session" class="faq-item">
