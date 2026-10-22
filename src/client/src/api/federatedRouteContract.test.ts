@@ -3,13 +3,14 @@ import type { SessionRef } from "../../../shared/apiTypes";
 import { FEDERATED_HTTP_ROUTES, FEDERATED_WEBSOCKET_ROUTES, SESSION_TREE_NAVIGATION_PROXY_TIMEOUT_MS, type FederatedHttpRouteSpec } from "../../../shared/federatedRoutes";
 import { resolveAppUrl } from "../appUrl";
 import { activityApi, configApi, filesApi, gitApi, learnedSkillsApi, memoryApi, modelTiersApi, modelsConfigApi, piPackagePluginsApi, piPackagesApi, piWebUiApi, pluginsApi, projectsApi, recentProjectsApi, sessionsApi, skillsConfigApi, terminalsApi, utilityModelsApi, workspacesApi } from "./clients";
-import { FEDERATED_ROUTE_SCENARIOS, GATEWAY_ADDRESSED_METHODS, MACHINE_SCOPED_CLIENT_APIS, activityScenarios, configScenarios, filesScenarios, gitScenarios, learnedSkillsScenarios, memoryScenarios, modelTiersScenarios, modelsConfigScenarios, piPackagePluginsScenarios, piPackagesScenarios, pluginsScenarios, projectsScenarios, recentProjectsScenarios, sessionsScenarios, skillsConfigScenarios, terminalsScenarios, utilityModelsScenarios, workspace, workspaceTasksScenarios, workspacesScenarios, type Fixture, type ScenarioTable } from "./federatedRouteScenarios.testSupport";
+import { FEDERATED_ROUTE_SCENARIOS, GATEWAY_ADDRESSED_METHODS, MACHINE_SCOPED_CLIENT_APIS, type Fixture, type ScenarioTable } from "./federatedRouteScenarios.testSupport";
 import { globalSessionEvents, realtimeEvents, sessionEvents, terminalSocket } from "./sockets";
 import { workspaceImagePreviewUrl } from "./urls";
 import { workspaceTasksApi } from "./workspaceTasksApi";
 
 const machineId = "remote-a";
-const session = { id: "s 1", cwd: workspace.path };
+const workspacePath = "/repo";
+const session = { id: "s 1", cwd: workspacePath };
 const pinResponseBody = {
   id: "s 1",
   path: "/repo/session.jsonl",
@@ -246,8 +247,7 @@ describe("federated route contract", () => {
     vi.stubGlobal("document", { baseURI: "https://pi.example.test/nested/pi-webui/" });
 
     expect(MACHINE_SCOPED_CLIENT_APIS.sessionsApi).toBe(sessionsApi);
-    expect(FEDERATED_ROUTE_SCENARIOS.sessionsApi).toBe(sessionsScenarios);
-    expect(Object.keys(sessionsScenarios)).toHaveLength(60);
+    expect(Object.keys(FEDERATED_ROUTE_SCENARIOS.sessionsApi)).toHaveLength(60);
 
     await runFederatedRouteScenarios({
       apis: { sessionsApi: MACHINE_SCOPED_CLIENT_APIS.sessionsApi },
@@ -264,10 +264,10 @@ describe("federated route contract", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await sessionsApi.reorder(session, {
-      cwd: workspace.path,
-      scope: { kind: "root", cwd: workspace.path },
+      cwd: workspacePath,
+      scope: { kind: "root", cwd: workspacePath },
       pinned: false,
-      catalogCwds: [workspace.path],
+      catalogCwds: [workspacePath],
       orderedSessions: [session],
     }, machineId).catch(() => undefined);
 
@@ -287,33 +287,26 @@ describe("federated route contract", () => {
     expect(MACHINE_SCOPED_CLIENT_APIS.gitApi).toBe(gitApi);
     expect(MACHINE_SCOPED_CLIENT_APIS.activityApi).toBe(activityApi);
     expect(MACHINE_SCOPED_CLIENT_APIS.workspaceTasksApi).toBe(workspaceTasksApi);
-    expect(FEDERATED_ROUTE_SCENARIOS.projectsApi).toBe(projectsScenarios);
-    expect(FEDERATED_ROUTE_SCENARIOS.workspacesApi).toBe(workspacesScenarios);
-    expect(FEDERATED_ROUTE_SCENARIOS.terminalsApi).toBe(terminalsScenarios);
-    expect(FEDERATED_ROUTE_SCENARIOS.filesApi).toBe(filesScenarios);
-    expect(FEDERATED_ROUTE_SCENARIOS.gitApi).toBe(gitScenarios);
-    expect(FEDERATED_ROUTE_SCENARIOS.activityApi).toBe(activityScenarios);
-    expect(FEDERATED_ROUTE_SCENARIOS.workspaceTasksApi).toBe(workspaceTasksScenarios);
-    expect(Object.keys(projectsScenarios)).toHaveLength(9);
-    expect(Object.keys(workspacesScenarios)).toHaveLength(7);
-    expect(Object.keys(terminalsScenarios)).toHaveLength(9);
-    expect(Object.keys(gitScenarios)).toHaveLength(2);
-    expect(Object.keys(activityScenarios)).toHaveLength(1);
-    expect(Object.keys(workspaceTasksScenarios)).toHaveLength(5);
+    expect(Object.keys(FEDERATED_ROUTE_SCENARIOS.projectsApi)).toHaveLength(9);
+    expect(Object.keys(FEDERATED_ROUTE_SCENARIOS.workspacesApi)).toHaveLength(7);
+    expect(Object.keys(FEDERATED_ROUTE_SCENARIOS.terminalsApi)).toHaveLength(9);
+    expect(Object.keys(FEDERATED_ROUTE_SCENARIOS.gitApi)).toHaveLength(2);
+    expect(Object.keys(FEDERATED_ROUTE_SCENARIOS.activityApi)).toHaveLength(1);
+    expect(Object.keys(FEDERATED_ROUTE_SCENARIOS.workspaceTasksApi)).toHaveLength(5);
     // Both file rows are separate route shapes behind one method; count fixtures, not method keys,
     // so a dropped branch fails here instead of passing on a nonempty table.
-    expect(filesScenarios.files.map((fixture) => `${fixture.route.method} ${fixture.route.path}`)).toEqual([
+    expect(FEDERATED_ROUTE_SCENARIOS.filesApi.files.map((fixture) => `${fixture.route.method} ${fixture.route.path}`)).toEqual([
       "GET /files",
       "GET /projects/:projectId/workspaces/:workspaceId/files",
     ]);
     const routeRowCount = [
-      ...Object.values(projectsScenarios),
-      ...Object.values(workspacesScenarios),
-      ...Object.values(terminalsScenarios),
-      ...Object.values(filesScenarios),
-      ...Object.values(gitScenarios),
-      ...Object.values(activityScenarios),
-      ...Object.values(workspaceTasksScenarios),
+      ...Object.values(FEDERATED_ROUTE_SCENARIOS.projectsApi),
+      ...Object.values(FEDERATED_ROUTE_SCENARIOS.workspacesApi),
+      ...Object.values(FEDERATED_ROUTE_SCENARIOS.terminalsApi),
+      ...Object.values(FEDERATED_ROUTE_SCENARIOS.filesApi),
+      ...Object.values(FEDERATED_ROUTE_SCENARIOS.gitApi),
+      ...Object.values(FEDERATED_ROUTE_SCENARIOS.activityApi),
+      ...Object.values(FEDERATED_ROUTE_SCENARIOS.workspaceTasksApi),
     ].reduce((total, fixtures) => total + fixtures.length, 0);
     expect(routeRowCount).toBe(35);
 
@@ -353,19 +346,15 @@ describe("federated route contract", () => {
     expect(MACHINE_SCOPED_CLIENT_APIS.modelsConfigApi).toBe(modelsConfigApi);
     expect(MACHINE_SCOPED_CLIENT_APIS.modelTiersApi).toBe(modelTiersApi);
     expect(MACHINE_SCOPED_CLIENT_APIS.utilityModelsApi).toBe(utilityModelsApi);
-    expect(FEDERATED_ROUTE_SCENARIOS.configApi).toBe(configScenarios);
-    expect(FEDERATED_ROUTE_SCENARIOS.modelsConfigApi).toBe(modelsConfigScenarios);
-    expect(FEDERATED_ROUTE_SCENARIOS.modelTiersApi).toBe(modelTiersScenarios);
-    expect(FEDERATED_ROUTE_SCENARIOS.utilityModelsApi).toBe(utilityModelsScenarios);
-    expect(Object.keys(configScenarios)).toHaveLength(2);
-    expect(Object.keys(modelsConfigScenarios)).toHaveLength(5);
-    expect(Object.keys(modelTiersScenarios)).toHaveLength(2);
-    expect(Object.keys(utilityModelsScenarios)).toHaveLength(2);
+    expect(Object.keys(FEDERATED_ROUTE_SCENARIOS.configApi)).toHaveLength(2);
+    expect(Object.keys(FEDERATED_ROUTE_SCENARIOS.modelsConfigApi)).toHaveLength(5);
+    expect(Object.keys(FEDERATED_ROUTE_SCENARIOS.modelTiersApi)).toHaveLength(2);
+    expect(Object.keys(FEDERATED_ROUTE_SCENARIOS.utilityModelsApi)).toHaveLength(2);
     const routeRowCount = [
-      ...Object.values(configScenarios),
-      ...Object.values(modelsConfigScenarios),
-      ...Object.values(modelTiersScenarios),
-      ...Object.values(utilityModelsScenarios),
+      ...Object.values(FEDERATED_ROUTE_SCENARIOS.configApi),
+      ...Object.values(FEDERATED_ROUTE_SCENARIOS.modelsConfigApi),
+      ...Object.values(FEDERATED_ROUTE_SCENARIOS.modelTiersApi),
+      ...Object.values(FEDERATED_ROUTE_SCENARIOS.utilityModelsApi),
     ].reduce((total, fixtures) => total + fixtures.length, 0);
     expect(routeRowCount).toBe(11);
 
@@ -402,28 +391,21 @@ describe("federated route contract", () => {
     expect(MACHINE_SCOPED_CLIENT_APIS.learnedSkillsApi).toBe(learnedSkillsApi);
     expect(MACHINE_SCOPED_CLIENT_APIS.pluginsApi).toBe(pluginsApi);
     expect(MACHINE_SCOPED_CLIENT_APIS.recentProjectsApi).toBe(recentProjectsApi);
-    expect(FEDERATED_ROUTE_SCENARIOS.skillsConfigApi).toBe(skillsConfigScenarios);
-    expect(FEDERATED_ROUTE_SCENARIOS.piPackagesApi).toBe(piPackagesScenarios);
-    expect(FEDERATED_ROUTE_SCENARIOS.piPackagePluginsApi).toBe(piPackagePluginsScenarios);
-    expect(FEDERATED_ROUTE_SCENARIOS.memoryApi).toBe(memoryScenarios);
-    expect(FEDERATED_ROUTE_SCENARIOS.learnedSkillsApi).toBe(learnedSkillsScenarios);
-    expect(FEDERATED_ROUTE_SCENARIOS.pluginsApi).toBe(pluginsScenarios);
-    expect(FEDERATED_ROUTE_SCENARIOS.recentProjectsApi).toBe(recentProjectsScenarios);
-    expect(Object.keys(skillsConfigScenarios)).toHaveLength(6);
-    expect(Object.keys(piPackagesScenarios)).toHaveLength(4);
-    expect(Object.keys(piPackagePluginsScenarios)).toHaveLength(2);
-    expect(Object.keys(memoryScenarios)).toHaveLength(1);
-    expect(Object.keys(learnedSkillsScenarios)).toHaveLength(1);
-    expect(Object.keys(pluginsScenarios)).toHaveLength(1);
-    expect(Object.keys(recentProjectsScenarios)).toHaveLength(3);
+    expect(Object.keys(FEDERATED_ROUTE_SCENARIOS.skillsConfigApi)).toHaveLength(6);
+    expect(Object.keys(FEDERATED_ROUTE_SCENARIOS.piPackagesApi)).toHaveLength(4);
+    expect(Object.keys(FEDERATED_ROUTE_SCENARIOS.piPackagePluginsApi)).toHaveLength(2);
+    expect(Object.keys(FEDERATED_ROUTE_SCENARIOS.memoryApi)).toHaveLength(1);
+    expect(Object.keys(FEDERATED_ROUTE_SCENARIOS.learnedSkillsApi)).toHaveLength(1);
+    expect(Object.keys(FEDERATED_ROUTE_SCENARIOS.pluginsApi)).toHaveLength(1);
+    expect(Object.keys(FEDERATED_ROUTE_SCENARIOS.recentProjectsApi)).toHaveLength(3);
     const routeRowCount = [
-      ...Object.values(skillsConfigScenarios),
-      ...Object.values(piPackagesScenarios),
-      ...Object.values(piPackagePluginsScenarios),
-      ...Object.values(memoryScenarios),
-      ...Object.values(learnedSkillsScenarios),
-      ...Object.values(pluginsScenarios),
-      ...Object.values(recentProjectsScenarios),
+      ...Object.values(FEDERATED_ROUTE_SCENARIOS.skillsConfigApi),
+      ...Object.values(FEDERATED_ROUTE_SCENARIOS.piPackagesApi),
+      ...Object.values(FEDERATED_ROUTE_SCENARIOS.piPackagePluginsApi),
+      ...Object.values(FEDERATED_ROUTE_SCENARIOS.memoryApi),
+      ...Object.values(FEDERATED_ROUTE_SCENARIOS.learnedSkillsApi),
+      ...Object.values(FEDERATED_ROUTE_SCENARIOS.pluginsApi),
+      ...Object.values(FEDERATED_ROUTE_SCENARIOS.recentProjectsApi),
     ].reduce((total, fixtures) => total + fixtures.length, 0);
     expect(routeRowCount).toBe(18);
 
@@ -481,6 +463,9 @@ describe("federated route contract", () => {
 
     expect(Object.keys(MACHINE_SCOPED_CLIENT_APIS)).toEqual(inventoryModules);
     expect(Object.keys(FEDERATED_ROUTE_SCENARIOS)).toEqual(inventoryModules);
+    // The gateway exception is a single declared method, not a mirror of the machine inventory: a
+    // module that merely names no gateway method must stay absent instead of mapping to an empty list.
+    expect(GATEWAY_ADDRESSED_METHODS).toEqual({ piWebUiApi: ["piWebUiRuntime"] });
   });
 
   it("matches route patterns by strict segments without collapsing or decoding", () => {

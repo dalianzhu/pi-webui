@@ -39,7 +39,7 @@ export type ScenarioTable<Api extends object> = {
 };
 
 /** PI WEBUI runtime and system status calls; every row must stay allowlisted on the federated proxy. */
-export const piWebUiScenarios = {
+const piWebUiScenarios = {
   piWebUiStatus: [{
     kind: "machine",
     route: { method: "GET", path: "/pi-webui/status" },
@@ -71,7 +71,7 @@ export const piWebUiScenarios = {
 const session = { id: "s 1", cwd: "/repo" };
 
 /** Session, notification, model-selection, and auth calls; every row must stay allowlisted on the federated proxy. */
-export const sessionsScenarios = {
+const sessionsScenarios = {
   sessions: [{
     kind: "machine",
     route: { method: "GET", path: "/sessions" },
@@ -384,8 +384,8 @@ export const sessionsScenarios = {
   }],
 } as const satisfies ScenarioTable<typeof sessionsApi>;
 
-/** Shared workspace fixture: the scenario tables and the contract test must exercise the same workspace identity. */
-export const workspace: Workspace = {
+/** Local workspace fixture for the argument builders that need a workspace identity. */
+const workspace: Workspace = {
   id: "w 1",
   projectId: "p 1",
   path: "/repo",
@@ -398,7 +398,7 @@ export const workspace: Workspace = {
 const projectUsageRequest = { projectPath: "/repo", liveCwds: ["/repo", "/repo-feature"] };
 
 /** Project catalog, directory, and usage calls; every row must stay allowlisted on the federated proxy. */
-export const projectsScenarios = {
+const projectsScenarios = {
   projects: [{
     kind: "machine",
     route: { method: "GET", path: "/projects" },
@@ -447,7 +447,7 @@ export const projectsScenarios = {
 } as const satisfies ScenarioTable<typeof projectsApi>;
 
 /** Project workspace catalog, file, and move calls; every row must stay allowlisted on the federated proxy. */
-export const workspacesScenarios = {
+const workspacesScenarios = {
   workspaces: [{
     kind: "machine",
     route: { method: "GET", path: "/projects/:projectId/workspaces" },
@@ -486,7 +486,7 @@ export const workspacesScenarios = {
 } as const satisfies ScenarioTable<typeof workspacesApi>;
 
 /** Workspace terminal and command-run calls; every row must stay allowlisted on the federated proxy. */
-export const terminalsScenarios = {
+const terminalsScenarios = {
   terminals: [{
     kind: "machine",
     route: { method: "GET", path: "/projects/:projectId/workspaces/:workspaceId/terminals" },
@@ -535,7 +535,7 @@ export const terminalsScenarios = {
 } as const satisfies ScenarioTable<typeof terminalsApi>;
 
 /** File suggestion calls; machine-wide and workspace-scoped lookups share one method but two route shapes. */
-export const filesScenarios = {
+const filesScenarios = {
   files: [
     {
       kind: "machine",
@@ -551,7 +551,7 @@ export const filesScenarios = {
 } as const satisfies ScenarioTable<typeof filesApi>;
 
 /** Workspace git inspection calls; every row must stay allowlisted on the federated proxy. */
-export const gitScenarios = {
+const gitScenarios = {
   gitStatus: [{
     kind: "machine",
     route: { method: "GET", path: "/projects/:projectId/workspaces/:workspaceId/git/status" },
@@ -565,7 +565,7 @@ export const gitScenarios = {
 } as const satisfies ScenarioTable<typeof gitApi>;
 
 /** Workspace activity calls; every row must stay allowlisted on the federated proxy. */
-export const activityScenarios = {
+const activityScenarios = {
   workspaceActivity: [{
     kind: "machine",
     route: { method: "GET", path: "/activity" },
@@ -593,7 +593,7 @@ const workspaceTaskMove = {
 };
 
 /** Workspace task catalog reads, writes, and moves; every row must stay allowlisted on the federated proxy. */
-export const workspaceTasksScenarios = {
+const workspaceTasksScenarios = {
   readWorkspace: [{
     kind: "machine",
     route: { method: "GET", path: "/projects/:projectId/workspaces/:workspaceId/workspace-tasks" },
@@ -622,7 +622,7 @@ export const workspaceTasksScenarios = {
 } as const satisfies ScenarioTable<typeof workspaceTasksApi>;
 
 /** Machine configuration document reads and writes; every row must stay allowlisted on the federated proxy. */
-export const configScenarios = {
+const configScenarios = {
   config: [{
     kind: "machine",
     route: { method: "GET", path: "/config" },
@@ -636,7 +636,7 @@ export const configScenarios = {
 } as const satisfies ScenarioTable<typeof configApi>;
 
 /** Editable models.json document, limits, and provider probe calls; every row must stay allowlisted on the federated proxy. */
-export const modelsConfigScenarios = {
+const modelsConfigScenarios = {
   config: [{
     kind: "machine",
     route: { method: "GET", path: "/models-config" },
@@ -682,7 +682,7 @@ const tierLadder: ModelTierLadder = {
 };
 
 /** Machine-global model-tier ladder reads and writes; every row must stay allowlisted on the federated proxy. */
-export const modelTiersScenarios = {
+const modelTiersScenarios = {
   settings: [{
     kind: "machine",
     route: { method: "GET", path: "/model-tiers" },
@@ -696,7 +696,7 @@ export const modelTiersScenarios = {
 } as const satisfies ScenarioTable<typeof modelTiersApi>;
 
 /** Machine-global utility-model reads and writes; every row must stay allowlisted on the federated proxy. */
-export const utilityModelsScenarios = {
+const utilityModelsScenarios = {
   settings: [{
     kind: "machine",
     route: { method: "GET", path: "/utility-models" },
@@ -710,7 +710,7 @@ export const utilityModelsScenarios = {
 } as const satisfies ScenarioTable<typeof utilityModelsApi>;
 
 /** Skills catalog, toggle, search, install, check, and update calls; every row must stay allowlisted on the federated proxy. */
-export const skillsConfigScenarios = {
+const skillsConfigScenarios = {
   list: [{
     kind: "machine",
     route: { method: "GET", path: "/skills" },
@@ -744,7 +744,7 @@ export const skillsConfigScenarios = {
 } as const satisfies ScenarioTable<typeof skillsConfigApi>;
 
 /** Pi package catalog and mutation calls; every row must stay allowlisted on the federated proxy. */
-export const piPackagesScenarios = {
+const piPackagesScenarios = {
   packages: [{
     kind: "machine",
     route: { method: "GET", path: "/pi-packages" },
@@ -768,7 +768,7 @@ export const piPackagesScenarios = {
 } as const satisfies ScenarioTable<typeof piPackagesApi>;
 
 /** Package plugin catalog and mutation calls; every row must stay allowlisted on the federated proxy. */
-export const piPackagePluginsScenarios = {
+const piPackagePluginsScenarios = {
   list: [{
     kind: "machine",
     route: { method: "GET", path: "/package-plugins" },
@@ -782,7 +782,7 @@ export const piPackagePluginsScenarios = {
 } as const satisfies ScenarioTable<typeof piPackagePluginsApi>;
 
 /** Project memory snapshot reads; every row must stay allowlisted on the federated proxy. */
-export const memoryScenarios = {
+const memoryScenarios = {
   snapshot: [{
     kind: "machine",
     route: { method: "GET", path: "/agent-memory/snapshot" },
@@ -791,7 +791,7 @@ export const memoryScenarios = {
 } as const satisfies ScenarioTable<typeof memoryApi>;
 
 /** Learned-skill snapshot reads; every row must stay allowlisted on the federated proxy. */
-export const learnedSkillsScenarios = {
+const learnedSkillsScenarios = {
   snapshot: [{
     kind: "machine",
     route: { method: "GET", path: "/agent-skills/snapshot" },
@@ -800,7 +800,7 @@ export const learnedSkillsScenarios = {
 } as const satisfies ScenarioTable<typeof learnedSkillsApi>;
 
 /** PI WEBUI plugin catalog reads; every row must stay allowlisted on the federated proxy. */
-export const pluginsScenarios = {
+const pluginsScenarios = {
   plugins: [{
     kind: "machine",
     route: { method: "GET", path: "/plugins" },
@@ -809,7 +809,7 @@ export const pluginsScenarios = {
 } as const satisfies ScenarioTable<typeof pluginsApi>;
 
 /** Recent-project history reads and writes; every row must stay allowlisted on the federated proxy. */
-export const recentProjectsScenarios = {
+const recentProjectsScenarios = {
   recentProjects: [{
     kind: "machine",
     route: { method: "GET", path: "/recent-projects" },
@@ -857,31 +857,15 @@ export const MACHINE_SCOPED_CLIENT_APIS = {
 } as const;
 
 type StagedClientApiKey = keyof typeof MACHINE_SCOPED_CLIENT_APIS;
-type StagedClientMethodKey<K extends StagedClientApiKey> = keyof (typeof MACHINE_SCOPED_CLIENT_APIS)[K];
 
-/** Methods of each staged namespace that must reach the gateway instead of a selected machine. */
+/**
+ * The specification's single gateway exception: `piWebUiRuntime` reaches the gateway instead of a
+ * selected machine. Modules with no gateway-addressed method stay absent rather than mapping to an
+ * empty list.
+ */
 export const GATEWAY_ADDRESSED_METHODS = {
-  sessionsApi: [],
-  projectsApi: [],
-  workspacesApi: [],
-  terminalsApi: [],
-  filesApi: [],
-  gitApi: [],
-  activityApi: [],
   piWebUiApi: ["piWebUiRuntime"],
-  configApi: [],
-  modelsConfigApi: [],
-  modelTiersApi: [],
-  utilityModelsApi: [],
-  skillsConfigApi: [],
-  piPackagesApi: [],
-  piPackagePluginsApi: [],
-  memoryApi: [],
-  learnedSkillsApi: [],
-  pluginsApi: [],
-  recentProjectsApi: [],
-  workspaceTasksApi: [],
-} as const satisfies { readonly [K in StagedClientApiKey]: readonly StagedClientMethodKey<K>[] };
+} as const;
 
 /** Complete scenario table per staged namespace, checked against that namespace's own API type. */
 export const FEDERATED_ROUTE_SCENARIOS = {
