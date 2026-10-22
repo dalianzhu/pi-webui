@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.27.2
+
+### Patch Changes
+
+- 41d4ab7: Restore available image attachments when editing a message from the chat history, with notices for images that could not be restored or were omitted at the attachment limit.
+
 ## 1.27.1
 
 ### Patch Changes
