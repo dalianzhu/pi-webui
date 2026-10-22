@@ -4,6 +4,7 @@ import type { HostSpeechSpeakRequest, ModelTierLadder, PiWebUiConfigValues, Spee
 import { UTILITY_MODEL_SESSION_ONLY } from "../../../shared/apiTypes";
 import { SPEECH_INPUT_MAX_TRANSCRIPT_BYTES, type SpeechInputAudioMimeType } from "../../../shared/speechInputAudio";
 import { api, configApi, filesApi, learnedSkillsApi, machinesApi, memoryApi, modelTiersApi, modelsConfigApi, piPackagesApi, piWebUiApi, pluginsApi, projectsApi, sessionsApi, skillsConfigApi, speechInputApi, terminalsApi, ttsApi, utilityModelsApi, workspacesApi } from "./clients";
+import { HttpRequestError } from "./http";
 
 const workspace: Workspace = {
   id: "w/1",
@@ -1186,6 +1187,73 @@ describe("session API compatibility", () => {
     ]);
     expect(JSON.parse(requestBody(fetchCall(fetchMock, 1)[1]))).toEqual({ cwd: ref.cwd, daemonInstanceId: "daemon-a", notificationId: "opaque/id?" });
     expect(JSON.parse(requestBody(fetchCall(fetchMock, 2)[1]))).toEqual({ cwd: ref.cwd, daemonInstanceId: "daemon-a", throughOrder: 1, throughOverflowWatermark: 7 });
+  });
+});
+
+describe("session pin API", () => {
+  const pinBody = {
+    id: "s 1",
+    path: "/repo/session.jsonl",
+    cwd: "/repo",
+    created: "2026-10-22T00:00:00.000Z",
+    modified: "2026-10-22T00:00:00.000Z",
+    messageCount: 0,
+    firstMessage: "",
+    pinned: true,
+  };
+  const unpinBody = { ...pinBody, pinned: false };
+
+  it("returns the complete pinned session from the encoded nested remote route", async () => {
+    vi.stubEnv("BASE_URL", "./");
+    vi.stubGlobal("document", { baseURI: "https://pi.example.test/nested/pi-webui/" });
+    const fetchMock = stubSequenceFetch([jsonResponse(pinBody)]);
+
+    const pinned = await sessionsApi.pin({ id: "s 1", cwd: "/repo" }, "remote /?");
+
+    expect(pinned).toEqual(pinBody);
+    expect(pinned.pinned).toBe(true);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [url, init] = fetchCall(fetchMock, 0);
+    expect(url).toBe("https://pi.example.test/nested/pi-webui/api/machines/remote%20%2F%3F/sessions/s%201/pin");
+    expect(init?.method).toBe("POST");
+    expect(JSON.parse(requestBody(init))).toEqual({ cwd: "/repo" });
+  });
+
+  it("returns the complete unpinned session from the encoded nested remote route", async () => {
+    vi.stubEnv("BASE_URL", "./");
+    vi.stubGlobal("document", { baseURI: "https://pi.example.test/nested/pi-webui/" });
+    const fetchMock = stubSequenceFetch([jsonResponse(unpinBody)]);
+
+    const unpinned = await sessionsApi.unpin({ id: "s 1", cwd: "/repo" }, "remote /?");
+
+    expect(unpinned).toEqual(unpinBody);
+    expect(unpinned.pinned).toBe(false);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [url, init] = fetchCall(fetchMock, 0);
+    expect(url).toBe("https://pi.example.test/nested/pi-webui/api/machines/remote%20%2F%3F/sessions/s%201/unpin");
+    expect(init?.method).toBe("POST");
+    expect(JSON.parse(requestBody(init))).toEqual({ cwd: "/repo" });
+  });
+
+  it("surfaces an older remote's missing pin route as an HttpRequestError", async () => {
+    vi.stubEnv("BASE_URL", "./");
+    vi.stubGlobal("document", { baseURI: "https://pi.example.test/nested/pi-webui/" });
+    const fetchMock = stubSequenceFetch([
+      new Response(JSON.stringify({ error: "API route not found" }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      }),
+    ]);
+
+    const error = await sessionsApi.pin({ id: "s 1", cwd: "/repo" }, "remote /?").catch((value: unknown) => value);
+
+    expect(error).toBeInstanceOf(HttpRequestError);
+    if (!(error instanceof HttpRequestError)) throw new Error("Expected an HttpRequestError rejection");
+    expect(error.name).toBe("HttpRequestError");
+    expect(error.status).toBe(404);
+    expect(error.message).toBe("API route not found");
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchCall(fetchMock, 0)[0]).toBe("https://pi.example.test/nested/pi-webui/api/machines/remote%20%2F%3F/sessions/s%201/pin");
   });
 });
 
