@@ -1,6 +1,6 @@
-import type { Workspace } from "../../../shared/apiTypes";
+import type { ModelTierLadder, Workspace } from "../../../shared/apiTypes";
 import { FEDERATED_HTTP_ROUTES } from "../../../shared/federatedRoutes";
-import { activityApi, filesApi, gitApi, piWebUiApi, projectsApi, sessionsApi, terminalsApi, workspacesApi } from "./clients";
+import { activityApi, configApi, filesApi, gitApi, modelTiersApi, modelsConfigApi, piWebUiApi, projectsApi, sessionsApi, terminalsApi, utilityModelsApi, workspacesApi } from "./clients";
 import { workspaceTasksApi, type WorkspaceTasksClient } from "./workspaceTasksApi";
 
 // Distribute over the tuple union; preserve method/path correlation, omit policy.
@@ -621,6 +621,94 @@ export const workspaceTasksScenarios = {
   }],
 } as const satisfies ScenarioTable<typeof workspaceTasksApi>;
 
+/** Machine configuration document reads and writes; every row must stay allowlisted on the federated proxy. */
+export const configScenarios = {
+  config: [{
+    kind: "machine",
+    route: { method: "GET", path: "/config" },
+    args: (m: string) => [m],
+  }],
+  saveConfig: [{
+    kind: "machine",
+    route: { method: "PUT", path: "/config" },
+    args: (m: string) => [{ spawnSessions: true }, m],
+  }],
+} as const satisfies ScenarioTable<typeof configApi>;
+
+/** Editable models.json document, limits, and provider probe calls; every row must stay allowlisted on the federated proxy. */
+export const modelsConfigScenarios = {
+  config: [{
+    kind: "machine",
+    route: { method: "GET", path: "/models-config" },
+    args: (m: string) => [m],
+  }],
+  limitsStatus: [{
+    kind: "machine",
+    route: { method: "GET", path: "/models-config/limits" },
+    args: (m: string) => [m],
+  }],
+  save: [{
+    kind: "machine",
+    route: { method: "PUT", path: "/models-config" },
+    args: (m: string) => [{ providers: {} }, m],
+  }],
+  test: [{
+    kind: "machine",
+    route: { method: "POST", path: "/models-config/test" },
+    args: (m: string) => [{
+      providerName: "custom",
+      provider: { api: "openai-completions", baseUrl: "https://models.example.test/v1", apiKey: "$MODEL_API_KEY" },
+      model: { id: "gpt" },
+    }, m],
+  }],
+  discover: [{
+    kind: "machine",
+    route: { method: "POST", path: "/models-config/discover" },
+    args: (m: string) => [{
+      providerName: "custom",
+      provider: { api: "openai-completions", baseUrl: "https://models.example.test/v1", apiKey: "$MODEL_API_KEY" },
+    }, m],
+  }],
+} as const satisfies ScenarioTable<typeof modelsConfigApi>;
+
+/** Every tier bound to one model, with the thinking level each tier is meant to reach. */
+const tierLadder: ModelTierLadder = {
+  economy: { model: { provider: "openai", id: "gpt-5.6-luna" }, thinkingLevel: "off" },
+  fast: { model: { provider: "openai", id: "gpt-5.6-luna" }, thinkingLevel: "low" },
+  standard: { model: { provider: "openai", id: "gpt-5.6-luna" }, thinkingLevel: "medium" },
+  advanced: { model: { provider: "openai", id: "gpt-5.6-luna" }, thinkingLevel: "high" },
+  capable: { model: { provider: "openai", id: "gpt-5.6-luna" }, thinkingLevel: "xhigh" },
+  frontier: { model: { provider: "openai", id: "gpt-5.6-luna" }, thinkingLevel: "max" },
+};
+
+/** Machine-global model-tier ladder reads and writes; every row must stay allowlisted on the federated proxy. */
+export const modelTiersScenarios = {
+  settings: [{
+    kind: "machine",
+    route: { method: "GET", path: "/model-tiers" },
+    args: (m: string) => [m],
+  }],
+  save: [{
+    kind: "machine",
+    route: { method: "PUT", path: "/model-tiers" },
+    args: (m: string) => [tierLadder, m],
+  }],
+} as const satisfies ScenarioTable<typeof modelTiersApi>;
+
+/** Machine-global utility-model reads and writes; every row must stay allowlisted on the federated proxy. */
+export const utilityModelsScenarios = {
+  settings: [{
+    kind: "machine",
+    route: { method: "GET", path: "/utility-models" },
+    args: (m: string) => [m],
+  }],
+  save: [{
+    kind: "machine",
+    route: { method: "PUT", path: "/utility-models" },
+    args: (m: string) => [{ context: null }, 3, m],
+  }],
+} as const satisfies ScenarioTable<typeof utilityModelsApi>;
+
 // `WorkspaceTasksClient` is declared as an interface, and interfaces carry no implicit string index
 // signature. This mapped view keeps every member type and the same object identity while letting the
 // namespace pass through the runner's index-signature-typed API map.
@@ -637,6 +725,10 @@ export const MACHINE_SCOPED_CLIENT_APIS = {
   gitApi,
   activityApi,
   workspaceTasksApi: workspaceTasksNamespace,
+  configApi,
+  modelsConfigApi,
+  modelTiersApi,
+  utilityModelsApi,
 } as const;
 
 type StagedClientApiKey = keyof typeof MACHINE_SCOPED_CLIENT_APIS;
@@ -653,6 +745,10 @@ export const GATEWAY_ADDRESSED_METHODS = {
   gitApi: [],
   activityApi: [],
   workspaceTasksApi: [],
+  configApi: [],
+  modelsConfigApi: [],
+  modelTiersApi: [],
+  utilityModelsApi: [],
 } as const satisfies { readonly [K in StagedClientApiKey]: readonly StagedClientMethodKey<K>[] };
 
 /** Complete scenario table per staged namespace, checked against that namespace's own API type. */
@@ -666,4 +762,8 @@ export const FEDERATED_ROUTE_SCENARIOS = {
   gitApi: gitScenarios,
   activityApi: activityScenarios,
   workspaceTasksApi: workspaceTasksScenarios,
+  configApi: configScenarios,
+  modelsConfigApi: modelsConfigScenarios,
+  modelTiersApi: modelTiersScenarios,
+  utilityModelsApi: utilityModelsScenarios,
 } as const satisfies { readonly [K in StagedClientApiKey]: ScenarioTable<(typeof MACHINE_SCOPED_CLIENT_APIS)[K]> };
