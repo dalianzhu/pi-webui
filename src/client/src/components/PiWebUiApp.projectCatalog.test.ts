@@ -112,6 +112,30 @@ describe("PiWebUiApp project catalog wiring", () => {
     expect(refresh).toHaveBeenCalledOnce();
   });
 
+  it("calibrates session lists on every realtime open, including reconnect", () => {
+    const app = createApp();
+    const refresh = vi.spyOn(workspaceController(app), "refreshSessionLists").mockResolvedValue();
+    invokeRealtimeConnected(app);
+    invokeRealtimeConnected(app);
+    expect(refresh).toHaveBeenCalledTimes(2);
+    expect(refresh).toHaveBeenCalledWith(undefined, "local");
+  });
+
+  it("routes scoped invalidations to session list refresh and rejects events from a previous machine", () => {
+    const app = createApp();
+    const refresh = vi.spyOn(workspaceController(app), "refreshSessionLists").mockResolvedValue();
+    let receive: ((event: unknown) => void) | undefined;
+    vi.spyOn(realtimeConnector(app), "connect").mockImplementation((onEvent) => { receive = onEvent; });
+    const connect: unknown = Reflect.get(app, "connectRealtime");
+    if (!isConnectRealtime(connect)) throw new Error("Missing realtime connect method");
+    connect.call(app);
+    receive?.({ type: "sessions.changed", cwd: featureWorkspace.path });
+    expect(refresh).toHaveBeenCalledExactlyOnceWith([featureWorkspace.path], "local");
+    setAppState(app, { ...initialAppState(), selectedMachine: { id: "remote", name: "remote", kind: "remote", createdAt: "now", updatedAt: "now" } });
+    receive?.({ type: "sessions.changed", cwd: featureWorkspace.path });
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
   it("requests immediate catalog reconciliation after browser resume", async () => {
     const app = createApp();
     const catalog = projectCatalogController(app);

@@ -45,7 +45,8 @@ function pendingApi(): {
 
 function controllerWith(api: ReturnType<typeof pendingApi>["api"], seed: Partial<AppState> = {}) {
   let state: AppState = { ...initialAppState(), projects: [project, otherProject], ...seed };
-  const sessions: Pick<SessionController, "clearActiveSession" | "preferredSession" | "selectSession"> = {
+  const sessions: Pick<SessionController, "clearActiveSession" | "preferredSession" | "selectSession" | "applyRefreshedSessionLists"> = {
+    applyRefreshedSessionLists: () => Promise.resolve(),
     clearActiveSession: () => undefined,
     preferredSession: () => undefined,
     selectSession: () => Promise.resolve(),

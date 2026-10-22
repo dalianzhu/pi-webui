@@ -1857,6 +1857,7 @@ type SessionUiEventBody =
   | { type: "pi.event"; eventType: string };
 
 export type GlobalSessionEvent =
+  | { type: "sessions.changed"; cwd: string }
   | Extract<SessionUiEventBody, { type: "status.update" | "activity.update" | "session.name" | "session.created" }>
   | SessionNotificationSummaryEvent
   | SessionUnreadEvent;

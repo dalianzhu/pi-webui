@@ -92,6 +92,42 @@ describe("SessionController pending starts", () => {
     expect(isCachedNewSessionInfo(state.sessions[0])).toBe(true);
   });
 
+  it("does not downgrade or re-cache an identity when persisted status precedes stale status and creation ACK", async () => {
+    const storage = new MemoryStorage();
+    Object.defineProperty(globalThis, "localStorage", { value: storage, configurable: true });
+    const started = { ...oldSession, persisted: false };
+    const response = deferred<SessionInfo>();
+    const h = pendingStartHarness({ startSession: () => response.promise });
+    const starting = h.controller.startSession();
+    h.controller.applySessionStatus({ ...status(started.id), persisted: true });
+    h.controller.applySessionStatus({ ...status(started.id), persisted: false });
+    expect(h.state().sessionStatuses[started.id]?.persisted).toBe(true);
+    response.resolve(started);
+    await starting;
+    expect(loadCachedNewSessions()).toEqual([]);
+    expect(h.state().selectedSession?.persisted).toBe(true);
+    expect(h.state().selectedSession).not.toHaveProperty("browserCachedNew");
+  });
+
+  it("keeps pending recovery and monotonic persistence evidence scoped by machine", async () => {
+    const storage = new MemoryStorage();
+    Object.defineProperty(globalThis, "localStorage", { value: storage, configurable: true });
+    const started = { ...oldSession, persisted: false };
+    const localResponse = deferred<SessionInfo>();
+    const remoteResponse = deferred<SessionInfo>();
+    const h = pendingStartHarness({ startSession: (_cwd, machineId) => machineId === "remote" ? remoteResponse.promise : localResponse.promise });
+    const localStart = h.controller.startSession();
+    h.controller.applySessionStatus({ ...status(started.id), persisted: true });
+    h.setState({ selectedMachine: { id: "remote", name: "remote", kind: "remote", createdAt: "now", updatedAt: "now" }, sessions: [], projectSessions: [], selectedSession: undefined, sessionStatuses: {} });
+    const remoteStart = h.controller.startSession();
+    remoteResponse.resolve(started);
+    await remoteStart;
+    localResponse.resolve(started);
+    await localStart;
+    expect(loadCachedNewSessions().map((session) => session.machineId)).toEqual(["remote"]);
+    expect(isCachedNewSessionInfo(h.state().selectedSession)).toBe(true);
+  });
+
   it("releases unrelated created-session broadcasts after pending starts settle", async () => {
     const started: SessionInfo = { ...oldSession, id: "started-session", path: "/tmp/started-session.jsonl" };
     const otherClientSession: SessionInfo = { ...oldSession, id: "other-client-session", path: "/tmp/other-client-session.jsonl" };

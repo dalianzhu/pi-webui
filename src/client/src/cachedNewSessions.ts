@@ -15,7 +15,7 @@ function browserStorage(): Storage | undefined {
 }
 
 export function rememberCachedNewSession(session: SessionInfo, machineId = defaultMachineId, storage = browserStorage()): void {
-  if (session.messageCount !== 0 || session.archived === true) return;
+  if (session.messageCount !== 0 || session.persisted === true || session.archived === true) return;
   const sessions = loadCachedNewSessions(storage).filter((candidate) => candidate.id !== session.id || candidate.machineId !== machineId);
   saveCachedNewSessions([markCachedNewSessionInfo(session, machineId), ...sessions], storage);
 }
@@ -25,16 +25,21 @@ export function markCachedNewSessionInfo(session: SessionInfo, machineId = defau
 }
 
 export function forgetCachedNewSession(sessionId: string, machineId = defaultMachineId, storage = browserStorage()): void {
-  const sessions = loadCachedNewSessions(storage).filter((session) => session.id !== sessionId || session.machineId !== machineId);
-  saveCachedNewSessions(sessions, storage);
+  const cached = loadCachedNewSessions(storage);
+  const sessions = cached.filter((session) => session.id !== sessionId || session.machineId !== machineId);
+  if (sessions.length !== cached.length) saveCachedNewSessions(sessions, storage);
 }
 
 export function mergeCachedNewSessions(cwd: string, sessions: SessionInfo[], machineId = defaultMachineId, storage = browserStorage()): SessionInfo[] {
   const sessionIds = new Set(sessions.map((session) => session.id));
+  // Modern catalogs also contain live, memory-only starts. Seeing one is not
+  // proof of persistence: keep its recovery cache, but do not duplicate its row.
+  // Shell-only history can have messages without a file; explicit false wins.
+  const persistedIds = new Set(sessions.filter((session) => session.persisted !== false || session.archived === true).map((session) => session.id));
   const cachedSessions = loadCachedNewSessions(storage);
-  const retainedCachedSessions = cachedSessions.filter((session) => session.machineId !== machineId || !sessionIds.has(session.id));
+  const retainedCachedSessions = cachedSessions.filter((session) => session.machineId !== machineId || !persistedIds.has(session.id));
   if (retainedCachedSessions.length !== cachedSessions.length) saveCachedNewSessions(retainedCachedSessions, storage);
-  const cached = retainedCachedSessions.filter((session) => session.machineId === machineId && session.cwd === cwd);
+  const cached = retainedCachedSessions.filter((session) => session.machineId === machineId && session.cwd === cwd && !sessionIds.has(session.id));
   return [...cached, ...sessions];
 }
 
@@ -44,22 +49,10 @@ export function isCachedNewSessionInfo(session: SessionInfo | undefined): sessio
 }
 
 export function stripCachedNewSessionMarker(session: SessionInfo): SessionInfo {
-  return {
-    id: session.id,
-    path: session.path,
-    cwd: session.cwd,
-    ...(session.persisted === undefined ? {} : { persisted: session.persisted }),
-    ...(session.name === undefined ? {} : { name: session.name }),
-    created: session.created,
-    modified: session.modified,
-    messageCount: session.messageCount,
-    firstMessage: session.firstMessage,
-    ...(session.parentSessionPath === undefined ? {} : { parentSessionPath: session.parentSessionPath }),
-    ...("machineId" in session && typeof session.machineId === "string" ? { machineId: session.machineId } : { machineId: defaultMachineId }),
-    ...(session.archived === true ? { archived: true } : {}),
-    ...(session.archivedAt === undefined ? {} : { archivedAt: session.archivedAt }),
-    ...(session.creationSource === undefined ? {} : { creationSource: session.creationSource }),
-  };
+  if (!isCachedNewSessionInfo(session)) return session;
+  const { browserCachedNew: marker, ...persisted } = session;
+  void marker;
+  return persisted;
 }
 
 export function loadCachedNewSessions(storage = browserStorage()): CachedNewSessionInfo[] {

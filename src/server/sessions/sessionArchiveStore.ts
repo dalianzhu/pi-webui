@@ -42,6 +42,14 @@ export function defaultSessionArchiveFilePath(env: NodeJS.ProcessEnv = process.e
   return join(piWebUiDataDir(env, cwd), "archived-sessions.json");
 }
 
+/** A rejected operation can still have changed durable history. */
+export class SessionArchiveMutationError extends Error {
+  constructor(readonly changedCwds: readonly string[], cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = "SessionArchiveMutationError";
+  }
+}
+
 export class SessionArchiveStore {
   private operationQueue: Promise<void> = Promise.resolve();
 
@@ -91,7 +99,11 @@ export class SessionArchiveStore {
       }
 
       await this.write(data);
-      for (const file of filesToRemove) await removeActiveSessionFile(file.source, file.archivePath);
+      try {
+        for (const file of filesToRemove) await removeActiveSessionFile(file.source, file.archivePath);
+      } catch (error: unknown) {
+        throw new SessionArchiveMutationError([...new Set(records.map((record) => record.cwd))], error);
+      }
       return records;
     });
   }
@@ -102,12 +114,14 @@ export class SessionArchiveStore {
       const record = data.sessions.find((session) => session.sessionId === sessionId);
       if (record === undefined) return;
 
-      if (record.archivePath !== undefined && record.originalPath !== undefined) {
-        await restoreSessionFile(record.archivePath, record.originalPath);
-      }
+      await this.trackMutation(async (changed) => {
+        if (record.archivePath !== undefined && record.originalPath !== undefined) {
+          await restoreSessionFile(record.archivePath, record.originalPath, () => { changed(record.cwd); });
+        }
 
-      const sessions = data.sessions.filter((session) => session.sessionId !== sessionId);
-      await this.write({ sessions });
+        const sessions = data.sessions.filter((session) => session.sessionId !== sessionId);
+        await this.write({ sessions });
+      });
     });
   }
 
@@ -124,11 +138,16 @@ export class SessionArchiveStore {
       const records = data.sessions.filter((session) => targetIdSet.has(session.sessionId));
       if (records.length === 0) return [];
 
-      for (const record of records) {
-        if (record.archivePath !== undefined && await pathExists(record.archivePath)) await unlink(record.archivePath);
-      }
-      const sessions = data.sessions.filter((session) => !targetIdSet.has(session.sessionId));
-      await this.write({ sessions });
+      await this.trackMutation(async (changed) => {
+        for (const record of records) {
+          if (record.archivePath !== undefined && await pathExists(record.archivePath)) {
+            await unlink(record.archivePath);
+            changed(record.cwd);
+          }
+        }
+        const sessions = data.sessions.filter((session) => !targetIdSet.has(session.sessionId));
+        await this.write({ sessions });
+      });
       const deletedIds = new Set(records.map((record) => record.sessionId));
       return targetIds.filter((sessionId) => deletedIds.has(sessionId));
     });
@@ -136,6 +155,16 @@ export class SessionArchiveStore {
 
   async isArchived(sessionId: string): Promise<boolean> {
     return (await this.get(sessionId)) !== undefined;
+  }
+
+  private async trackMutation(operation: (changed: (cwd: string) => void) => Promise<void>): Promise<void> {
+    const changedCwds = new Set<string>();
+    try {
+      await operation((cwd) => { changedCwds.add(cwd); });
+    } catch (error: unknown) {
+      if (changedCwds.size > 0) throw new SessionArchiveMutationError([...changedCwds], error);
+      throw error;
+    }
   }
 
   private archivePathFor(session: ArchiveSessionInput): string {
@@ -208,19 +237,21 @@ async function removeActiveSessionFile(source: string, archivePath: string): Pro
   if (await pathExists(source)) await unlink(source);
 }
 
-async function restoreSessionFile(archivePath: string, originalPath: string): Promise<void> {
+async function restoreSessionFile(archivePath: string, originalPath: string, changed: () => void): Promise<void> {
   if (archivePath === originalPath) return;
   if (await pathExists(originalPath)) throw new Error(`Cannot restore archived session because a session already exists at ${originalPath}`);
   await mkdir(dirname(originalPath), { recursive: true });
-  await moveFile(archivePath, originalPath);
+  await moveFile(archivePath, originalPath, changed);
 }
 
-async function moveFile(source: string, destination: string): Promise<void> {
+async function moveFile(source: string, destination: string, changed: () => void): Promise<void> {
   try {
     await rename(source, destination);
+    changed();
   } catch (error: unknown) {
     if (!isNodeErrorWithCode(error, "EXDEV")) throw error;
     await copyFile(source, destination);
+    changed();
     await unlink(source);
   }
 }

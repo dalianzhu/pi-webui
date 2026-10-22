@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { existsSync } from "node:fs";
 import type { SessionUiEvent } from "../../shared/apiTypes.js";
 import type { ClientCommandResult, ClientSession, ClientSessionTreeSnapshot } from "../types.js";
 import { isBuiltinCommand } from "./builtinCommands.js";
@@ -54,7 +55,7 @@ export interface SessionCommandLifecycle<TSession extends CommandSession = Comma
   getSessionTree?: (session: TSession) => ClientSessionTreeSnapshot | undefined;
   hasActiveWork?: (session: TSession) => boolean;
   isTreeNavigationActive?: (session: TSession) => boolean;
-  runSessionReplacement?: <T>(session: TSession, operation: () => Promise<T>) => Promise<T>;
+  runSessionReplacement?: <T extends { cancelled: boolean }>(session: TSession, operation: () => Promise<T>) => Promise<T>;
 }
 
 export interface SessionCommandNaming {
@@ -272,7 +273,7 @@ export class SessionCommandService<TSession extends CommandSession = CommandSess
     return sessionHasActiveWork(session) || this.lifecycle.hasActiveWork?.(session) === true;
   }
 
-  private runSessionReplacement<T>(runtime: CommandRuntime<TSession>, operation: () => Promise<T>): Promise<T> {
+  private runSessionReplacement<T extends { cancelled: boolean }>(runtime: CommandRuntime<TSession>, operation: () => Promise<T>): Promise<T> {
     const runReplacement = this.lifecycle.runSessionReplacement;
     return runReplacement === undefined ? operation() : runReplacement(runtime.session, operation);
   }
@@ -320,6 +321,7 @@ export function clientSessionFromRuntime(runtime: CommandRuntime): ClientSession
   return {
     id: session.sessionId,
     path: session.sessionFile ?? "",
+    persisted: session.sessionFile !== undefined && session.sessionFile !== "" && existsSync(session.sessionFile),
     cwd: runtime.cwd,
     ...(session.sessionName === undefined ? {} : { name: session.sessionName }),
     created: new Date().toISOString(),

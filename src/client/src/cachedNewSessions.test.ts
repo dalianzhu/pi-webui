@@ -76,6 +76,28 @@ describe("cached new sessions", () => {
     expect(loadCachedNewSessions(storage).map((session) => session.id)).toEqual(["other"]);
   });
 
+  it.each([0, 1])("keeps transient recovery without duplicate rows even with %s shell-only messages", (messageCount) => {
+    const storage = new MemoryStorage();
+    const transient = { ...baseSession, persisted: false };
+    rememberCachedNewSession(transient, "local", storage);
+    const reported = { ...transient, messageCount };
+    expect(mergeCachedNewSessions("/repo", [reported], "local", storage)).toEqual([reported]);
+    expect(loadCachedNewSessions(storage)).toHaveLength(1);
+    mergeCachedNewSessions("/repo", [{ ...reported, persisted: true }], "local", storage);
+    expect(loadCachedNewSessions(storage)).toEqual([]);
+  });
+
+  it("never creates a recovery record for already persisted history", () => {
+    const storage = new MemoryStorage();
+    rememberCachedNewSession({ ...baseSession, persisted: true }, "local", storage);
+    expect(loadCachedNewSessions(storage)).toEqual([]);
+  });
+
+  it("preserves server metadata when retiring a browser-cache marker", () => {
+    const session = { ...baseSession, pinned: true, manualOrder: 7 };
+    expect(stripCachedNewSessionMarker(markCachedNewSessionInfo(session))).toMatchObject(session);
+  });
+
   it("does not load an unknown cached creation source", () => {
     const storage = new MemoryStorage();
     storage.setItem("pi-webui:cached-new-sessions:v1", JSON.stringify([
