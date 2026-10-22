@@ -178,7 +178,29 @@ describe("federated route contract", () => {
       scenarios: { sessionsApi: mismatchedScenarios },
       gatewayAddresses: {},
       machineId,
-    })).rejects.toThrow("declared route is not most-specific: observed=POST /sessions/s%201/pin; declared=POST /sessions/:sessionId/archive");
+    })).rejects.toThrow('[federation sessionsApi.pin#1] strict path mismatch: observed=POST /sessions/s%201/pin; declared=POST /sessions/:sessionId/archive; matchingPatterns=["POST /sessions/:sessionId/pin"]');
+  });
+
+  it("rejects a declaration that loses specificity to a literal allowlisted route", async () => {
+    vi.stubEnv("BASE_URL", "./");
+    vi.stubGlobal("document", { baseURI: "https://pi.example.test/nested/pi-webui/" });
+    const testApi = {
+      archiveMany: (sessions: readonly SessionRef[], machineId = "local") => sessionsApi.archiveMany(sessions, machineId),
+    };
+    const testScenarios = {
+      archiveMany: [{
+        kind: "machine",
+        route: { method: "POST", path: "/sessions/:sessionId/archive" },
+        args: (m: string) => [[session], m],
+      }],
+    } as const satisfies ScenarioTable<typeof testApi>;
+
+    await expect(runFederatedRouteScenarios({
+      apis: { sessionsApi: testApi },
+      scenarios: { sessionsApi: testScenarios },
+      gatewayAddresses: {},
+      machineId,
+    })).rejects.toThrow('[federation sessionsApi.archiveMany#1] declared route is not most-specific: observed=POST /sessions/bulk/archive; declared=POST /sessions/:sessionId/archive; mostSpecific=POST /sessions/bulk/archive; matchingPatterns=["POST /sessions/bulk/archive","POST /sessions/:sessionId/archive"]');
   });
 
   it("rejects an empty fixture list before invoking its method", async () => {
@@ -573,7 +595,9 @@ function assertMostSpecificRoute(
   const declared = `${declaredRoute.method} ${declaredRoute.path}`;
   const candidates = FEDERATED_HTTP_ROUTES.filter((spec) => spec.method === observedMethod && strictPathMatches(observedPath, spec.path));
   const matchingPatterns = JSON.stringify(candidates.map(formatRouteSpec));
-  if (candidates.length === 0) {
+  // Path name the declaration promised must match before specificity is meaningful; an unrelated but
+  // allowlisted endpoint is a strict path mismatch, not a declaration that lost to a more specific one.
+  if (candidates.length === 0 || !strictPathMatches(observedPath, declaredRoute.path)) {
     expect.fail(`${label} strict path mismatch: observed=${observedRequest}; declared=${declared}; matchingPatterns=${matchingPatterns}`);
   }
   const fewestParameters = Math.min(...candidates.map(countRouteParameters));
