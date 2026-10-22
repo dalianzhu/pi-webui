@@ -3,7 +3,7 @@ import type { SessionRef, Workspace } from "../../../shared/apiTypes";
 import { FEDERATED_HTTP_ROUTES, FEDERATED_WEBSOCKET_ROUTES, SESSION_TREE_NAVIGATION_PROXY_TIMEOUT_MS, type FederatedHttpRouteSpec } from "../../../shared/federatedRoutes";
 import { resolveAppUrl } from "../appUrl";
 import { activityApi, configApi, filesApi, gitApi, learnedSkillsApi, memoryApi, modelsConfigApi, piPackagePluginsApi, piPackagesApi, piWebUiApi, pluginsApi, projectsApi, sessionsApi, skillsConfigApi, terminalsApi, workspacesApi } from "./clients";
-import type { Fixture, ScenarioTable } from "./federatedRouteScenarios.testSupport";
+import { FEDERATED_ROUTE_SCENARIOS, GATEWAY_ADDRESSED_METHODS, MACHINE_SCOPED_CLIENT_APIS, type Fixture, type ScenarioTable } from "./federatedRouteScenarios.testSupport";
 import { globalSessionEvents, realtimeEvents, sessionEvents, terminalSocket } from "./sockets";
 import { workspaceImagePreviewUrl } from "./urls";
 import { workspaceTasksApi } from "./workspaceTasksApi";
@@ -231,6 +231,43 @@ describe("federated route contract", () => {
     expect(invocations).toBe(0);
   });
 
+  it("runs the staged PI WEBUI client API scenarios through the sequential runner", async () => {
+    vi.stubEnv("BASE_URL", "./");
+    vi.stubGlobal("document", { baseURI: "https://pi.example.test/nested/pi-webui/" });
+
+    expect(MACHINE_SCOPED_CLIENT_APIS.piWebUiApi).toBe(piWebUiApi);
+
+    await runFederatedRouteScenarios({
+      apis: MACHINE_SCOPED_CLIENT_APIS,
+      scenarios: FEDERATED_ROUTE_SCENARIOS,
+      gatewayAddresses: GATEWAY_ADDRESSED_METHODS,
+      machineId,
+    });
+  });
+
+  it("resolves staged PI WEBUI client calls within the application root of a nested deployment", async () => {
+    vi.stubEnv("BASE_URL", "./");
+    vi.stubGlobal("document", { baseURI: "https://pi.example.test/nested/pi-webui/" });
+    const fetchMock = vi.fn<FetchLike>(() => Promise.resolve(jsonResponse({})));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await Promise.all([
+      ignoreParseFailure(piWebUiApi.piWebUiRuntime()),
+      ignoreParseFailure(piWebUiApi.piWebUiStatus(machineId)),
+      ignoreParseFailure(piWebUiApi.checkForUpdates(machineId)),
+      ignoreParseFailure(piWebUiApi.systemInfo(machineId)),
+      ignoreParseFailure(piWebUiApi.systemMetrics(machineId)),
+    ]);
+
+    expect(fetchMock.mock.calls.map(([url]) => toUrl(url).toString())).toEqual([
+      "https://pi.example.test/nested/pi-webui/api/pi-webui/runtime",
+      "https://pi.example.test/nested/pi-webui/api/machines/remote-a/pi-webui/status",
+      "https://pi.example.test/nested/pi-webui/api/machines/remote-a/pi-webui/status?refresh=1",
+      "https://pi.example.test/nested/pi-webui/api/machines/remote-a/pi-webui/system-info",
+      "https://pi.example.test/nested/pi-webui/api/machines/remote-a/pi-webui/system-metrics",
+    ]);
+  });
+
   it("matches route patterns by strict segments without collapsing or decoding", () => {
     const pattern = "/sessions/:sessionId/pin";
     expect(strictPathMatches("/sessions/s%201/pin", pattern)).toBe(true);
@@ -248,10 +285,6 @@ describe("federated route contract", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await Promise.all([
-      ignoreParseFailure(piWebUiApi.piWebUiStatus(machineId)),
-      ignoreParseFailure(piWebUiApi.checkForUpdates(machineId)),
-      ignoreParseFailure(piWebUiApi.systemInfo(machineId)),
-      ignoreParseFailure(piWebUiApi.systemMetrics(machineId)),
       ignoreParseFailure(memoryApi.snapshot(workspace.path, machineId)),
       ignoreParseFailure(learnedSkillsApi.snapshot(workspace.path, machineId)),
       ignoreParseFailure(configApi.config(machineId)),
