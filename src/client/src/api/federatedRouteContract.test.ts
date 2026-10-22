@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Workspace } from "../../../shared/apiTypes";
+import type { SessionRef, Workspace } from "../../../shared/apiTypes";
 import { FEDERATED_HTTP_ROUTES, FEDERATED_WEBSOCKET_ROUTES, SESSION_TREE_NAVIGATION_PROXY_TIMEOUT_MS, type FederatedHttpRouteSpec } from "../../../shared/federatedRoutes";
+import { resolveAppUrl } from "../appUrl";
 import { activityApi, configApi, filesApi, gitApi, learnedSkillsApi, memoryApi, modelsConfigApi, piPackagePluginsApi, piPackagesApi, piWebUiApi, pluginsApi, projectsApi, sessionsApi, skillsConfigApi, terminalsApi, workspacesApi } from "./clients";
+import type { Fixture, ScenarioTable } from "./federatedRouteScenarios.testSupport";
 import { globalSessionEvents, realtimeEvents, sessionEvents, terminalSocket } from "./sockets";
 import { workspaceImagePreviewUrl } from "./urls";
 import { workspaceTasksApi } from "./workspaceTasksApi";
@@ -21,6 +23,21 @@ const workspaceTask = { id: "build", title: "Build", command: "npm run build", c
 const workspaceTasksConfig = {
   version: 1 as const,
   tasks: [workspaceTask],
+};
+const pinResponseBody = {
+  id: "s 1",
+  path: "/repo/session.jsonl",
+  cwd: "/repo",
+  created: "2026-10-22T00:00:00.000Z",
+  modified: "2026-10-22T00:00:00.000Z",
+  messageCount: 0,
+  firstMessage: "",
+  pinned: true,
+};
+const unpinResponseBody = { ...pinResponseBody, pinned: false };
+const pinnedSessionResponseBodies: Readonly<Record<string, unknown>> = {
+  "sessionsApi.pin": pinResponseBody,
+  "sessionsApi.unpin": unpinResponseBody,
 };
 const workspaceTaskMove = {
   operationId: "00000000-0000-4000-8000-000000000001",
@@ -118,6 +135,110 @@ describe("federated route contract", () => {
 
   it("allowlists read-only learned-skill snapshots for remote machines", () => {
     expect(FEDERATED_HTTP_ROUTES).toContainEqual({ method: "GET", path: "/agent-skills/snapshot" });
+  });
+
+  it("runs a declared scenario through a frozen namespace and checks the observed request", async () => {
+    vi.stubEnv("BASE_URL", "./");
+    vi.stubGlobal("document", { baseURI: "https://pi.example.test/nested/pi-webui/" });
+    let invocations = 0;
+    const testApi = {
+      pin: (session: SessionRef, machineId = "local") => {
+        invocations += 1;
+        return sessionsApi.pin(session, machineId);
+      },
+    };
+    const testScenarios = {
+      pin: [{
+        kind: "machine",
+        route: { method: "POST", path: "/sessions/:sessionId/pin" },
+        args: (m: string) => [session, m],
+      }],
+    } as const satisfies ScenarioTable<typeof testApi>;
+
+    await runFederatedRouteScenarios({
+      apis: { sessionsApi: testApi },
+      scenarios: { sessionsApi: testScenarios },
+      gatewayAddresses: {},
+      machineId,
+    });
+
+    expect(invocations).toBe(1);
+    expect(Object.isFrozen(testApi)).toBe(true);
+
+    const mismatchedScenarios = {
+      pin: [{
+        kind: "machine",
+        route: { method: "POST", path: "/sessions/:sessionId/archive" },
+        args: (m: string) => [session, m],
+      }],
+    } as const satisfies ScenarioTable<typeof testApi>;
+
+    await expect(runFederatedRouteScenarios({
+      apis: { sessionsApi: testApi },
+      scenarios: { sessionsApi: mismatchedScenarios },
+      gatewayAddresses: {},
+      machineId,
+    })).rejects.toThrow('[federation sessionsApi.pin#1] strict path mismatch: observed=POST /sessions/s%201/pin; declared=POST /sessions/:sessionId/archive; matchingPatterns=["POST /sessions/:sessionId/pin"]');
+  });
+
+  it("rejects a declaration that loses specificity to a literal allowlisted route", async () => {
+    vi.stubEnv("BASE_URL", "./");
+    vi.stubGlobal("document", { baseURI: "https://pi.example.test/nested/pi-webui/" });
+    const testApi = {
+      archiveMany: (sessions: readonly SessionRef[], machineId = "local") => sessionsApi.archiveMany(sessions, machineId),
+    };
+    const testScenarios = {
+      archiveMany: [{
+        kind: "machine",
+        route: { method: "POST", path: "/sessions/:sessionId/archive" },
+        args: (m: string) => [[session], m],
+      }],
+    } as const satisfies ScenarioTable<typeof testApi>;
+
+    await expect(runFederatedRouteScenarios({
+      apis: { sessionsApi: testApi },
+      scenarios: { sessionsApi: testScenarios },
+      gatewayAddresses: {},
+      machineId,
+    })).rejects.toThrow('[federation sessionsApi.archiveMany#1] declared route is not most-specific: observed=POST /sessions/bulk/archive; declared=POST /sessions/:sessionId/archive; mostSpecific=POST /sessions/bulk/archive; matchingPatterns=["POST /sessions/bulk/archive","POST /sessions/:sessionId/archive"]');
+  });
+
+  it("rejects an empty fixture list before invoking its method", async () => {
+    vi.stubEnv("BASE_URL", "./");
+    vi.stubGlobal("document", { baseURI: "https://pi.example.test/nested/pi-webui/" });
+    let invocations = 0;
+    const testApi = {
+      pin: (session: SessionRef, machineId = "local") => {
+        invocations += 1;
+        return sessionsApi.pin(session, machineId);
+      },
+    };
+    const testScenarios = {
+      pin: [{
+        kind: "machine",
+        route: { method: "POST", path: "/sessions/:sessionId/pin" },
+        args: (m: string) => [session, m],
+      }],
+    } as const satisfies ScenarioTable<typeof testApi>;
+    Reflect.set(testScenarios, "pin", []);
+
+    await expect(runFederatedRouteScenarios({
+      apis: { sessionsApi: testApi },
+      scenarios: { sessionsApi: testScenarios },
+      gatewayAddresses: {},
+      machineId,
+    })).rejects.toThrow("[federation sessionsApi.pin] empty fixture list: expected>=1 observed=0");
+    expect(invocations).toBe(0);
+  });
+
+  it("matches route patterns by strict segments without collapsing or decoding", () => {
+    const pattern = "/sessions/:sessionId/pin";
+    expect(strictPathMatches("/sessions/s%201/pin", pattern)).toBe(true);
+    expect(strictPathMatches("/sessions/s%2F1/pin", pattern)).toBe(true);
+    expect(strictPathMatches("//sessions/s%201/pin", pattern)).toBe(false);
+    expect(strictPathMatches("/sessions//s%201/pin", pattern)).toBe(false);
+    expect(strictPathMatches("/sessions/s%201/pin/", pattern)).toBe(false);
+    expect(strictPathMatches("/sessions//pin", pattern)).toBe(false);
   });
 
   it("covers machine-scoped client HTTP calls with remote proxy routes", async () => {
@@ -287,9 +408,256 @@ describe("federated route contract", () => {
 
 type FetchLike = (url: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
+type AnyFixture = Fixture<(...args: unknown[]) => unknown>;
+type AnyMachineFixture = Extract<AnyFixture, { readonly kind: "machine" }>;
+type AnyGatewayFixture = Extract<AnyFixture, { readonly kind: "gateway" }>;
+type AnyScenarioTable = Readonly<Record<string, readonly AnyFixture[]>>;
+
+interface FederatedRouteScenarioRun {
+  readonly apis: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+  readonly scenarios: Readonly<Record<string, AnyScenarioTable>>;
+  readonly gatewayAddresses: Readonly<Record<string, readonly string[]>>;
+  readonly machineId: string;
+}
+
+interface CapturedFailure {
+  readonly name: string;
+  readonly message: string;
+}
+
 interface ObservedHttpRoute {
   method: string;
   path: string;
+}
+
+async function runFederatedRouteScenarios(run: FederatedRouteScenarioRun): Promise<void> {
+  let activeFixtureIdentity = "";
+  const fetchMock = vi.fn<FetchLike>(() =>
+    Promise.resolve(jsonResponse(pinnedSessionResponseBodies[activeFixtureIdentity] ?? {})),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+
+  const apiEntries = Object.entries(run.apis);
+  for (const [, api] of apiEntries) {
+    Object.freeze(api);
+  }
+  assertNamespacesFrozenBeforeBuilders(apiEntries, run.scenarios);
+
+  for (const [moduleKey, table] of Object.entries(run.scenarios)) {
+    const api = run.apis[moduleKey];
+    if (api === undefined) throw new Error(`[federation ${moduleKey}] missing staged API namespace`);
+    const gatewayMethods = run.gatewayAddresses[moduleKey];
+    for (const [methodKey, fixtures] of tableRows(table)) {
+      if (fixtures.length === 0) {
+        expect.fail(`[federation ${moduleKey}.${methodKey}] empty fixture list: expected>=1 observed=0`);
+      }
+      const member = methodAt(api, methodKey);
+      for (const [index, fixture] of fixtures.entries()) {
+        const label = `[federation ${moduleKey}.${methodKey}#${String(index + 1)}]`;
+        const expectedKind = gatewayMethods?.includes(methodKey) === true ? "gateway" : "machine";
+        const declared = declaredRouteLabel(fixture);
+        expect(
+          fixture.kind,
+          `${label} gateway identity mismatch: expected=${expectedKind} observed=${fixture.kind}; declared=${declared}`,
+        ).toBe(expectedKind);
+        if (typeof member !== "function") {
+          expect.fail(`${label} assigned method is not callable: expected=function observed=${typeof member}; declared=${declared}`);
+        }
+
+        // Phase 0: build the argument tuple without allowing any transport.
+        const phase0Baseline = fetchMock.mock.calls.length;
+        let builderFailure: CapturedFailure | undefined;
+        let invocationArguments: unknown[] = [];
+        try {
+          invocationArguments = fixture.args(run.machineId);
+        } catch (error) {
+          builderFailure = captureFailure(error);
+        }
+        const phase0Count = fetchMock.mock.calls.length - phase0Baseline;
+        if (phase0Count !== 0) {
+          expect.fail(`${label} requests while building arguments: expected=0 observed=${String(phase0Count)}; declared=${declared}`);
+        }
+        if (builderFailure !== undefined) {
+          expect.fail(`${label} argument builder threw (namespace frozen=${String(Object.isFrozen(api))}): ${builderFailure.name}: ${builderFailure.message}; declared=${declared}`);
+        }
+
+        // Phase 1: invoke the assigned member once with the built tuple and observe transport.
+        activeFixtureIdentity = `${moduleKey}.${methodKey}`;
+        const phase1Baseline = fetchMock.mock.calls.length;
+        let outcome = "resolved";
+        let invocationValue: unknown;
+        try {
+          const result: unknown = Reflect.apply(member, api, invocationArguments);
+          invocationValue = await result;
+        } catch (error) {
+          const failure = captureFailure(error);
+          outcome = `rejected(${failure.name}: ${failure.message})`;
+        }
+        const phase1Calls = fetchMock.mock.calls.slice(phase1Baseline);
+        const observedCalls = phase1Calls.map(formatObservedCall);
+        const soleCall = phase1Calls[0];
+        if (phase1Calls.length !== 1 || soleCall === undefined) {
+          expect.fail(`${label} fetch count mismatch: expected=1 observed=${String(phase1Calls.length)}; declared=${declared}; observedCalls=${JSON.stringify(observedCalls)}; outcome=${outcome}`);
+        }
+
+        if (fixture.kind === "gateway") {
+          assertGatewayRequest(label, fixture, soleCall);
+        } else {
+          assertMachineRequest(label, fixture, soleCall, run.machineId);
+        }
+        const pinnedResponse = pinnedSessionResponseBodies[`${moduleKey}.${methodKey}`];
+        if (pinnedResponse !== undefined) {
+          expect(invocationValue, `${label} pinned session response mismatch: declared=${declared}`).toEqual(pinnedResponse);
+        }
+      }
+    }
+  }
+}
+
+function assertNamespacesFrozenBeforeBuilders(
+  apiEntries: readonly (readonly [string, Readonly<Record<string, unknown>>])[],
+  scenarios: Readonly<Record<string, AnyScenarioTable>>,
+): void {
+  for (const [moduleKey, api] of apiEntries) {
+    const [firstRow] = tableRows(scenarios[moduleKey] ?? {});
+    if (firstRow === undefined) continue;
+    const [methodKey, fixtures] = firstRow;
+    const [firstFixture] = fixtures;
+    if (firstFixture === undefined) continue;
+    const declared = declaredRouteLabel(firstFixture);
+    expect(
+      Object.isFrozen(api),
+      `[federation ${moduleKey}.${methodKey}#1] namespace freeze failed: expected=true observed=${String(Object.isFrozen(api))}; declared=${declared}`,
+    ).toBe(true);
+  }
+}
+
+// Mapped-type iteration loses the correlation between each method key and that key's own fixture list;
+// this is the runtime recovery point for the key/fixture pairing, in table declaration order.
+function tableRows(table: AnyScenarioTable): readonly (readonly [string, readonly AnyFixture[]])[] {
+  return Object.entries(table);
+}
+
+// The same iteration cannot carry the assigned method's own signature; the captured member stays untyped
+// and the invocation site rebuilds the argument list from the key's fixture tuple.
+function methodAt(api: Readonly<Record<string, unknown>>, key: string): unknown {
+  return api[key];
+}
+
+function declaredRouteLabel(fixture: AnyFixture): string {
+  return fixture.kind === "gateway"
+    ? `GET ${resolveAppUrl(fixture.endpoint)}`
+    : `${fixture.route.method} ${fixture.route.path}`;
+}
+
+function captureFailure(value: unknown): CapturedFailure {
+  return value instanceof Error
+    ? { name: value.name, message: value.message }
+    : { name: "NonError", message: String(value) };
+}
+
+function observedHttpMethod(input: string | URL | Request, init?: RequestInit): string {
+  if (init?.method !== undefined) return init.method.toUpperCase();
+  if (input instanceof Request) return input.method.toUpperCase();
+  return "GET";
+}
+
+function formatObservedCall(call: Parameters<FetchLike>): string {
+  return `${observedHttpMethod(call[0], call[1])} ${toUrl(call[0]).toString()}`;
+}
+
+function assertMachineRequest(label: string, fixture: AnyMachineFixture, call: Parameters<FetchLike>, machineId: string): void {
+  const [input, init] = call;
+  const observedMethod = observedHttpMethod(input, init);
+  const observedUrl = toUrl(input);
+  const declared = `${fixture.route.method} ${fixture.route.path}`;
+  const expectedPrefix = resolveAppUrl(`api/machines/${encodeURIComponent(machineId)}`);
+  const expectedBase = new URL(expectedPrefix);
+  if (observedUrl.origin !== expectedBase.origin || !observedUrl.pathname.startsWith(`${expectedBase.pathname}/`)) {
+    expect.fail(`${label} machine URL mismatch: expectedPrefix=${expectedPrefix}/ observed=${observedUrl.toString()}; declared=${declared}`);
+  }
+  const observedPath = observedUrl.pathname.slice(expectedBase.pathname.length);
+  const observedRequest = `${observedMethod} ${observedPath}`;
+  expect(
+    observedMethod,
+    `${label} HTTP method mismatch: expected=${fixture.route.method} observed=${observedMethod}; declared=${declared}; observedRequest=${observedRequest}`,
+  ).toBe(fixture.route.method);
+  assertMostSpecificRoute(label, fixture.route, observedMethod, observedPath, observedRequest);
+}
+
+function assertMostSpecificRoute(
+  label: string,
+  declaredRoute: AnyMachineFixture["route"],
+  observedMethod: string,
+  observedPath: string,
+  observedRequest: string,
+): void {
+  const declared = `${declaredRoute.method} ${declaredRoute.path}`;
+  const candidates = FEDERATED_HTTP_ROUTES.filter((spec) => spec.method === observedMethod && strictPathMatches(observedPath, spec.path));
+  const matchingPatterns = JSON.stringify(candidates.map(formatRouteSpec));
+  // Path name the declaration promised must match before specificity is meaningful; an unrelated but
+  // allowlisted endpoint is a strict path mismatch, not a declaration that lost to a more specific one.
+  if (candidates.length === 0 || !strictPathMatches(observedPath, declaredRoute.path)) {
+    expect.fail(`${label} strict path mismatch: observed=${observedRequest}; declared=${declared}; matchingPatterns=${matchingPatterns}`);
+  }
+  const fewestParameters = Math.min(...candidates.map(countRouteParameters));
+  const mostSpecific = candidates.filter((spec) => countRouteParameters(spec) === fewestParameters);
+  if (mostSpecific.length > 1) {
+    expect.fail(`${label} ambiguous most-specific route: observed=${observedRequest}; declared=${declared}; tiedPatterns=${JSON.stringify(mostSpecific.map(formatRouteSpec))}; matchingPatterns=${matchingPatterns}`);
+  }
+  const [winner] = mostSpecific;
+  if (winner === undefined) {
+    expect.fail(`${label} strict path mismatch: observed=${observedRequest}; declared=${declared}; matchingPatterns=${matchingPatterns}`);
+  }
+  if (winner.method !== declaredRoute.method || winner.path !== declaredRoute.path) {
+    expect.fail(`${label} declared route is not most-specific: observed=${observedRequest}; declared=${declared}; mostSpecific=${formatRouteSpec(winner)}; matchingPatterns=${matchingPatterns}`);
+  }
+}
+
+function assertGatewayRequest(label: string, fixture: AnyGatewayFixture, call: Parameters<FetchLike>): void {
+  const [input, init] = call;
+  const observedMethod = observedHttpMethod(input, init);
+  const observedUrl = toUrl(input);
+  const resolvedEndpoint = resolveAppUrl(fixture.endpoint);
+  const declared = `GET ${resolvedEndpoint}`;
+  const observedRequest = `${observedMethod} ${observedUrl.toString()}`;
+  expect(
+    observedMethod,
+    `${label} HTTP method mismatch: expected=GET observed=${observedMethod}; declared=${declared}; observedRequest=${observedRequest}`,
+  ).toBe("GET");
+  expect(
+    hasMachineAddressSegment(observedUrl.pathname),
+    `${label} gateway request is machine-addressed: observed=${observedRequest}; declared=${declared}`,
+  ).toBe(false);
+  expect(
+    observedUrl.toString(),
+    `${label} gateway URL mismatch: expected=${resolvedEndpoint} observed=${observedUrl.toString()}; declared=${declared}`,
+  ).toBe(resolvedEndpoint);
+}
+
+function hasMachineAddressSegment(pathname: string): boolean {
+  const segments = pathname.split("/");
+  return segments.some((segment, index) => segment === "api" && segments[index + 1] === "machines");
+}
+
+function formatRouteSpec(spec: FederatedHttpRouteSpec): string {
+  return `${spec.method} ${spec.path}`;
+}
+
+function countRouteParameters(spec: FederatedHttpRouteSpec): number {
+  return spec.path.split("/").filter((segment) => segment.startsWith(":")).length;
+}
+
+function strictPathMatches(observedPath: string, pattern: string): boolean {
+  const observedSegments = observedPath.split("/");
+  const patternSegments = pattern.split("/");
+  if (observedSegments.length !== patternSegments.length) return false;
+  return patternSegments.every((segment, index) => {
+    const observedSegment = observedSegments[index];
+    if (observedSegment === undefined) return false;
+    if (segment.startsWith(":")) return observedSegment !== "";
+    return segment === observedSegment;
+  });
 }
 
 async function ignoreParseFailure(promise: Promise<unknown>): Promise<void> {
