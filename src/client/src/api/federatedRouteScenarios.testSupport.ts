@@ -1,5 +1,5 @@
 import { FEDERATED_HTTP_ROUTES } from "../../../shared/federatedRoutes";
-import { piWebUiApi } from "./clients";
+import { piWebUiApi, sessionsApi } from "./clients";
 
 // Distribute over the tuple union; preserve method/path correlation, omit policy.
 type AllowlistedRouteKey = (typeof FEDERATED_HTTP_ROUTES)[number] extends infer R
@@ -66,9 +66,326 @@ export const piWebUiScenarios = {
   }],
 } as const satisfies ScenarioTable<typeof piWebUiApi>;
 
+const session = { id: "s 1", cwd: "/repo" };
+
+/** Session, notification, model-selection, and auth calls; every row must stay allowlisted on the federated proxy. */
+export const sessionsScenarios = {
+  sessions: [{
+    kind: "machine",
+    route: { method: "GET", path: "/sessions" },
+    args: (m: string) => ["/repo", m],
+  }],
+  reorder: [{
+    kind: "machine",
+    route: { method: "POST", path: "/sessions/:sessionId/reorder" },
+    args: (m: string) => [session, {
+      cwd: session.cwd,
+      scope: { kind: "root" as const, cwd: session.cwd },
+      pinned: false,
+      catalogCwds: [session.cwd],
+      orderedSessions: [session],
+    }, m],
+  }],
+  unreadCatalog: [{
+    kind: "machine",
+    route: { method: "GET", path: "/sessions/unread" },
+    args: (m: string) => [m],
+  }],
+  acknowledgeUnread: [{
+    kind: "machine",
+    route: { method: "POST", path: "/sessions/:sessionId/unread/acknowledge" },
+    args: (m: string) => [session, "catalog-a", 7, m],
+  }],
+  notificationInbox: [{
+    kind: "machine",
+    route: { method: "GET", path: "/sessions/:sessionId/notifications" },
+    args: (m: string) => [session, m],
+  }],
+  dismissNotification: [{
+    kind: "machine",
+    route: { method: "POST", path: "/sessions/:sessionId/notifications/dismiss" },
+    args: (m: string) => [session, "daemon-a", "daemon-a:1", m],
+  }],
+  dismissAllNotifications: [{
+    kind: "machine",
+    route: { method: "POST", path: "/sessions/:sessionId/notifications/dismiss-all" },
+    args: (m: string) => [session, "daemon-a", { order: 1, overflowWatermark: 0 }, m],
+  }],
+  startSession: [{
+    kind: "machine",
+    route: { method: "POST", path: "/sessions" },
+    args: (m: string) => ["/repo", m],
+  }],
+  startPlusSession: [{
+    kind: "machine",
+    route: { method: "POST", path: "/sessions" },
+    args: (m: string) => ["/repo", {
+      mode: "tiered",
+      exact: { model: { provider: "openai", id: "gpt" }, thinkingLevel: "medium" },
+      tier: "advanced",
+    }, m],
+  }],
+  sessionDefaults: [{
+    kind: "machine",
+    route: { method: "GET", path: "/session-defaults" },
+    args: (m: string) => ["/repo", m],
+  }],
+  sessionDefaultsV2: [{
+    kind: "machine",
+    route: { method: "GET", path: "/session-defaults" },
+    args: (m: string) => ["/repo", m],
+  }],
+  updateSessionDefaults: [{
+    kind: "machine",
+    route: { method: "PUT", path: "/session-defaults" },
+    args: (m: string) => ["/repo", { model: { provider: "openai", modelId: "gpt" } }, m],
+  }],
+  cleanupPreview: [{
+    kind: "machine",
+    route: { method: "POST", path: "/sessions/cleanup/preview" },
+    args: (m: string) => [{ archiveIdleDays: 14 }, m],
+  }],
+  cleanup: [{
+    kind: "machine",
+    route: { method: "POST", path: "/sessions/cleanup" },
+    args: (m: string) => [{ archiveIdleDays: 14, deleteArchivedDays: 30, projectCwds: ["/repo"] }, m],
+  }],
+  forceCleanup: [{
+    kind: "machine",
+    route: { method: "POST", path: "/sessions/cleanup/force" },
+    args: (m: string) => [m],
+  }],
+  archiveMany: [{
+    kind: "machine",
+    route: { method: "POST", path: "/sessions/bulk/archive" },
+    args: (m: string) => [[session], m],
+  }],
+  deleteArchivedMany: [{
+    kind: "machine",
+    route: { method: "POST", path: "/sessions/bulk/delete-archived" },
+    args: (m: string) => [[session], m],
+  }],
+  messages: [{
+    kind: "machine",
+    route: { method: "GET", path: "/sessions/:sessionId/messages" },
+    args: (m: string) => [session, { limit: 20, before: 10 }, m],
+  }],
+  status: [{
+    kind: "machine",
+    route: { method: "GET", path: "/sessions/:sessionId/status" },
+    args: (m: string) => [session, m],
+  }],
+  systemPrompt: [{
+    kind: "machine",
+    route: { method: "GET", path: "/sessions/:sessionId/system-prompt" },
+    args: (m: string) => [session, m],
+  }],
+  extensionEntries: [{
+    kind: "machine",
+    route: { method: "GET", path: "/sessions/:sessionId/extension-entries" },
+    args: (m: string) => [session, m],
+  }],
+  streamSnapshot: [{
+    kind: "machine",
+    route: { method: "GET", path: "/sessions/:sessionId/stream-snapshot" },
+    args: (m: string) => [session, m],
+  }],
+  clearQueue: [{
+    kind: "machine",
+    route: { method: "POST", path: "/sessions/:sessionId/queue/clear" },
+    args: (m: string) => [session, m],
+  }],
+  dismissWarning: [{
+    kind: "machine",
+    route: { method: "POST", path: "/sessions/:sessionId/warnings/dismiss" },
+    args: (m: string) => [session, "warning-1", m],
+  }],
+  modelPolicy: [{
+    kind: "machine",
+    route: { method: "GET", path: "/sessions/:sessionId/model-policy" },
+    args: (m: string) => [session, m],
+  }],
+  rememberCurrentModelPolicy: [{
+    kind: "machine",
+    route: { method: "POST", path: "/sessions/:sessionId/model-policy/remember" },
+    args: (m: string) => [session, m],
+  }],
+  setModelPolicy: [{
+    kind: "machine",
+    route: { method: "PUT", path: "/sessions/:sessionId/model-policy" },
+    args: (m: string) => [session, { mode: "tiered", tier: "advanced" }, m],
+  }],
+  models: [{
+    kind: "machine",
+    route: { method: "GET", path: "/sessions/:sessionId/models" },
+    args: (m: string) => [session, m],
+  }],
+  setModel: [{
+    kind: "machine",
+    route: { method: "POST", path: "/sessions/:sessionId/model" },
+    args: (m: string) => [session, "openai", "gpt", m],
+  }],
+  cycleModel: [{
+    kind: "machine",
+    route: { method: "POST", path: "/sessions/:sessionId/model/cycle" },
+    args: (m: string) => [session, "forward", m],
+  }],
+  thinkingLevels: [{
+    kind: "machine",
+    route: { method: "GET", path: "/sessions/:sessionId/thinking-levels" },
+    args: (m: string) => [session, m],
+  }],
+  setThinkingLevel: [{
+    kind: "machine",
+    route: { method: "POST", path: "/sessions/:sessionId/thinking-level" },
+    args: (m: string) => [session, "medium", m],
+  }],
+  cycleThinkingLevel: [{
+    kind: "machine",
+    route: { method: "POST", path: "/sessions/:sessionId/thinking-level/cycle" },
+    args: (m: string) => [session, m],
+  }],
+  commands: [{
+    kind: "machine",
+    route: { method: "GET", path: "/sessions/:sessionId/commands" },
+    args: (m: string) => [session, m],
+  }],
+  prompt: [{
+    kind: "machine",
+    route: { method: "POST", path: "/sessions/:sessionId/prompt" },
+    args: (m: string) => [session, "hello", "followUp", m],
+  }],
+  saveAttachments: [{
+    kind: "machine",
+    route: { method: "POST", path: "/sessions/:sessionId/attachments" },
+    args: (m: string) => [session, [{ kind: "image", mimeType: "image/png", data: "QUJD", name: "shot.png" }], m, "uploads"],
+  }],
+  shell: [{
+    kind: "machine",
+    route: { method: "POST", path: "/sessions/:sessionId/shell" },
+    args: (m: string) => [session, "ls", m],
+  }],
+  runCommand: [{
+    kind: "machine",
+    route: { method: "POST", path: "/sessions/:sessionId/commands/run" },
+    args: (m: string) => [session, "/help", m],
+  }],
+  respondToCommand: [{
+    kind: "machine",
+    route: { method: "POST", path: "/sessions/:sessionId/commands/respond" },
+    args: (m: string) => [session, "req 1", "yes", m],
+  }],
+  navigateTree: [{
+    kind: "machine",
+    route: { method: "POST", path: "/sessions/:sessionId/tree/navigate" },
+    args: (m: string) => [session, { targetId: "entry-1", expectedLeafId: "leaf-1", summary: { mode: "none" } }, m],
+  }],
+  editFromHere: [{
+    kind: "machine",
+    route: { method: "POST", path: "/sessions/:sessionId/messages/edit-from-here" },
+    args: (m: string) => [session, "assistant-1", m],
+  }],
+  forkFromHere: [{
+    kind: "machine",
+    route: { method: "POST", path: "/sessions/:sessionId/messages/fork" },
+    args: (m: string) => [session, "user-2", m],
+  }],
+  abort: [{
+    kind: "machine",
+    route: { method: "POST", path: "/sessions/:sessionId/abort" },
+    args: (m: string) => [session, m],
+  }],
+  stop: [{
+    kind: "machine",
+    route: { method: "POST", path: "/sessions/:sessionId/stop" },
+    args: (m: string) => [session, m],
+  }],
+  archive: [{
+    kind: "machine",
+    route: { method: "POST", path: "/sessions/:sessionId/archive" },
+    args: (m: string) => [session, m],
+  }],
+  archiveWithDescendants: [{
+    kind: "machine",
+    route: { method: "POST", path: "/sessions/:sessionId/archive-tree" },
+    args: (m: string) => [session, m],
+  }],
+  restore: [{
+    kind: "machine",
+    route: { method: "POST", path: "/sessions/:sessionId/restore" },
+    args: (m: string) => [session, m],
+  }],
+  deleteArchived: [{
+    kind: "machine",
+    route: { method: "DELETE", path: "/sessions/:sessionId" },
+    args: (m: string) => [session, m],
+  }],
+  detachParent: [{
+    kind: "machine",
+    route: { method: "POST", path: "/sessions/:sessionId/detach-parent" },
+    args: (m: string) => [session, m],
+  }],
+  reloadSession: [{
+    kind: "machine",
+    route: { method: "POST", path: "/sessions/:sessionId/reload" },
+    args: (m: string) => [session, m],
+  }],
+  pin: [{
+    kind: "machine",
+    route: { method: "POST", path: "/sessions/:sessionId/pin" },
+    args: (m: string) => [session, m],
+  }],
+  unpin: [{
+    kind: "machine",
+    route: { method: "POST", path: "/sessions/:sessionId/unpin" },
+    args: (m: string) => [session, m],
+  }],
+  authProviders: [{
+    kind: "machine",
+    route: { method: "GET", path: "/auth/providers" },
+    args: (m: string) => [{ mode: "login", authType: "oauth", machineId: m }],
+  }],
+  saveApiKey: [{
+    kind: "machine",
+    route: { method: "POST", path: "/auth/api-key" },
+    args: (m: string) => ["openai", "key", m],
+  }],
+  startInteractiveApiKeyLogin: [{
+    kind: "machine",
+    route: { method: "POST", path: "/auth/api-key/interactive" },
+    args: (m: string) => ["amazon-bedrock", m],
+  }],
+  logoutProvider: [{
+    kind: "machine",
+    route: { method: "POST", path: "/auth/logout" },
+    args: (m: string) => ["openai", m],
+  }],
+  startOAuthLogin: [{
+    kind: "machine",
+    route: { method: "POST", path: "/auth/oauth" },
+    args: (m: string) => ["openai", m],
+  }],
+  oauthFlow: [{
+    kind: "machine",
+    route: { method: "GET", path: "/auth/oauth/:flowId" },
+    args: (m: string) => ["flow 1", m],
+  }],
+  respondOAuthFlow: [{
+    kind: "machine",
+    route: { method: "POST", path: "/auth/oauth/:flowId/respond" },
+    args: (m: string) => ["flow 1", "req 1", "code", m],
+  }],
+  cancelOAuthFlow: [{
+    kind: "machine",
+    route: { method: "POST", path: "/auth/oauth/:flowId/cancel" },
+    args: (m: string) => ["flow 1", m],
+  }],
+} as const satisfies ScenarioTable<typeof sessionsApi>;
+
 /** Client namespaces converted to typed scenarios so far; later conversions extend this registry. */
 export const MACHINE_SCOPED_CLIENT_APIS = {
   piWebUiApi,
+  sessionsApi,
 } as const;
 
 type StagedClientApiKey = keyof typeof MACHINE_SCOPED_CLIENT_APIS;
@@ -77,9 +394,11 @@ type StagedClientMethodKey<K extends StagedClientApiKey> = keyof (typeof MACHINE
 /** Methods of each staged namespace that must reach the gateway instead of a selected machine. */
 export const GATEWAY_ADDRESSED_METHODS = {
   piWebUiApi: ["piWebUiRuntime"],
+  sessionsApi: [],
 } as const satisfies { readonly [K in StagedClientApiKey]: readonly StagedClientMethodKey<K>[] };
 
 /** Complete scenario table per staged namespace, checked against that namespace's own API type. */
 export const FEDERATED_ROUTE_SCENARIOS = {
   piWebUiApi: piWebUiScenarios,
+  sessionsApi: sessionsScenarios,
 } as const satisfies { readonly [K in StagedClientApiKey]: ScenarioTable<(typeof MACHINE_SCOPED_CLIENT_APIS)[K]> };
