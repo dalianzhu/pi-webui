@@ -2,14 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionRef } from "../../../shared/apiTypes";
 import { FEDERATED_HTTP_ROUTES, FEDERATED_WEBSOCKET_ROUTES, SESSION_TREE_NAVIGATION_PROXY_TIMEOUT_MS, type FederatedHttpRouteSpec } from "../../../shared/federatedRoutes";
 import { resolveAppUrl } from "../appUrl";
-import { activityApi, configApi, filesApi, gitApi, learnedSkillsApi, memoryApi, modelTiersApi, modelsConfigApi, piPackagePluginsApi, piPackagesApi, piWebUiApi, pluginsApi, projectsApi, sessionsApi, skillsConfigApi, terminalsApi, utilityModelsApi, workspacesApi } from "./clients";
-import { FEDERATED_ROUTE_SCENARIOS, GATEWAY_ADDRESSED_METHODS, MACHINE_SCOPED_CLIENT_APIS, activityScenarios, configScenarios, filesScenarios, gitScenarios, modelTiersScenarios, modelsConfigScenarios, projectsScenarios, sessionsScenarios, terminalsScenarios, utilityModelsScenarios, workspace, workspaceTasksScenarios, workspacesScenarios, type Fixture, type ScenarioTable } from "./federatedRouteScenarios.testSupport";
+import { activityApi, configApi, filesApi, gitApi, learnedSkillsApi, memoryApi, modelTiersApi, modelsConfigApi, piPackagePluginsApi, piPackagesApi, piWebUiApi, pluginsApi, projectsApi, recentProjectsApi, sessionsApi, skillsConfigApi, terminalsApi, utilityModelsApi, workspacesApi } from "./clients";
+import { FEDERATED_ROUTE_SCENARIOS, GATEWAY_ADDRESSED_METHODS, MACHINE_SCOPED_CLIENT_APIS, type Fixture, type ScenarioTable } from "./federatedRouteScenarios.testSupport";
 import { globalSessionEvents, realtimeEvents, sessionEvents, terminalSocket } from "./sockets";
 import { workspaceImagePreviewUrl } from "./urls";
 import { workspaceTasksApi } from "./workspaceTasksApi";
 
 const machineId = "remote-a";
-const session = { id: "s 1", cwd: workspace.path };
+const workspacePath = "/repo";
+const session = { id: "s 1", cwd: workspacePath };
 const pinResponseBody = {
   id: "s 1",
   path: "/repo/session.jsonl",
@@ -225,11 +226,11 @@ describe("federated route contract", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await Promise.all([
-      ignoreParseFailure(piWebUiApi.piWebUiRuntime()),
-      ignoreParseFailure(piWebUiApi.piWebUiStatus(machineId)),
-      ignoreParseFailure(piWebUiApi.checkForUpdates(machineId)),
-      ignoreParseFailure(piWebUiApi.systemInfo(machineId)),
-      ignoreParseFailure(piWebUiApi.systemMetrics(machineId)),
+      piWebUiApi.piWebUiRuntime().catch(() => undefined),
+      piWebUiApi.piWebUiStatus(machineId).catch(() => undefined),
+      piWebUiApi.checkForUpdates(machineId).catch(() => undefined),
+      piWebUiApi.systemInfo(machineId).catch(() => undefined),
+      piWebUiApi.systemMetrics(machineId).catch(() => undefined),
     ]);
 
     expect(fetchMock.mock.calls.map(([url]) => toUrl(url).toString())).toEqual([
@@ -246,8 +247,7 @@ describe("federated route contract", () => {
     vi.stubGlobal("document", { baseURI: "https://pi.example.test/nested/pi-webui/" });
 
     expect(MACHINE_SCOPED_CLIENT_APIS.sessionsApi).toBe(sessionsApi);
-    expect(FEDERATED_ROUTE_SCENARIOS.sessionsApi).toBe(sessionsScenarios);
-    expect(Object.keys(sessionsScenarios)).toHaveLength(60);
+    expect(Object.keys(FEDERATED_ROUTE_SCENARIOS.sessionsApi)).toHaveLength(60);
 
     await runFederatedRouteScenarios({
       apis: { sessionsApi: MACHINE_SCOPED_CLIENT_APIS.sessionsApi },
@@ -263,13 +263,13 @@ describe("federated route contract", () => {
     const fetchMock = vi.fn<FetchLike>(() => Promise.resolve(jsonResponse({})));
     vi.stubGlobal("fetch", fetchMock);
 
-    await ignoreParseFailure(sessionsApi.reorder(session, {
-      cwd: workspace.path,
-      scope: { kind: "root", cwd: workspace.path },
+    await sessionsApi.reorder(session, {
+      cwd: workspacePath,
+      scope: { kind: "root", cwd: workspacePath },
       pinned: false,
-      catalogCwds: [workspace.path],
+      catalogCwds: [workspacePath],
       orderedSessions: [session],
-    }, machineId));
+    }, machineId).catch(() => undefined);
 
     expect(fetchMock.mock.calls.map(([url]) => toUrl(url).toString())).toEqual([
       `https://pi.example.test/nested/pi-webui/api/machines/${encodeURIComponent(machineId)}/sessions/${encodeURIComponent(session.id)}/reorder`,
@@ -287,33 +287,26 @@ describe("federated route contract", () => {
     expect(MACHINE_SCOPED_CLIENT_APIS.gitApi).toBe(gitApi);
     expect(MACHINE_SCOPED_CLIENT_APIS.activityApi).toBe(activityApi);
     expect(MACHINE_SCOPED_CLIENT_APIS.workspaceTasksApi).toBe(workspaceTasksApi);
-    expect(FEDERATED_ROUTE_SCENARIOS.projectsApi).toBe(projectsScenarios);
-    expect(FEDERATED_ROUTE_SCENARIOS.workspacesApi).toBe(workspacesScenarios);
-    expect(FEDERATED_ROUTE_SCENARIOS.terminalsApi).toBe(terminalsScenarios);
-    expect(FEDERATED_ROUTE_SCENARIOS.filesApi).toBe(filesScenarios);
-    expect(FEDERATED_ROUTE_SCENARIOS.gitApi).toBe(gitScenarios);
-    expect(FEDERATED_ROUTE_SCENARIOS.activityApi).toBe(activityScenarios);
-    expect(FEDERATED_ROUTE_SCENARIOS.workspaceTasksApi).toBe(workspaceTasksScenarios);
-    expect(Object.keys(projectsScenarios)).toHaveLength(9);
-    expect(Object.keys(workspacesScenarios)).toHaveLength(7);
-    expect(Object.keys(terminalsScenarios)).toHaveLength(9);
-    expect(Object.keys(gitScenarios)).toHaveLength(2);
-    expect(Object.keys(activityScenarios)).toHaveLength(1);
-    expect(Object.keys(workspaceTasksScenarios)).toHaveLength(5);
+    expect(Object.keys(FEDERATED_ROUTE_SCENARIOS.projectsApi)).toHaveLength(9);
+    expect(Object.keys(FEDERATED_ROUTE_SCENARIOS.workspacesApi)).toHaveLength(7);
+    expect(Object.keys(FEDERATED_ROUTE_SCENARIOS.terminalsApi)).toHaveLength(9);
+    expect(Object.keys(FEDERATED_ROUTE_SCENARIOS.gitApi)).toHaveLength(2);
+    expect(Object.keys(FEDERATED_ROUTE_SCENARIOS.activityApi)).toHaveLength(1);
+    expect(Object.keys(FEDERATED_ROUTE_SCENARIOS.workspaceTasksApi)).toHaveLength(5);
     // Both file rows are separate route shapes behind one method; count fixtures, not method keys,
     // so a dropped branch fails here instead of passing on a nonempty table.
-    expect(filesScenarios.files.map((fixture) => `${fixture.route.method} ${fixture.route.path}`)).toEqual([
+    expect(FEDERATED_ROUTE_SCENARIOS.filesApi.files.map((fixture) => `${fixture.route.method} ${fixture.route.path}`)).toEqual([
       "GET /files",
       "GET /projects/:projectId/workspaces/:workspaceId/files",
     ]);
     const routeRowCount = [
-      ...Object.values(projectsScenarios),
-      ...Object.values(workspacesScenarios),
-      ...Object.values(terminalsScenarios),
-      ...Object.values(filesScenarios),
-      ...Object.values(gitScenarios),
-      ...Object.values(activityScenarios),
-      ...Object.values(workspaceTasksScenarios),
+      ...Object.values(FEDERATED_ROUTE_SCENARIOS.projectsApi),
+      ...Object.values(FEDERATED_ROUTE_SCENARIOS.workspacesApi),
+      ...Object.values(FEDERATED_ROUTE_SCENARIOS.terminalsApi),
+      ...Object.values(FEDERATED_ROUTE_SCENARIOS.filesApi),
+      ...Object.values(FEDERATED_ROUTE_SCENARIOS.gitApi),
+      ...Object.values(FEDERATED_ROUTE_SCENARIOS.activityApi),
+      ...Object.values(FEDERATED_ROUTE_SCENARIOS.workspaceTasksApi),
     ].reduce((total, fixtures) => total + fixtures.length, 0);
     expect(routeRowCount).toBe(35);
 
@@ -353,19 +346,15 @@ describe("federated route contract", () => {
     expect(MACHINE_SCOPED_CLIENT_APIS.modelsConfigApi).toBe(modelsConfigApi);
     expect(MACHINE_SCOPED_CLIENT_APIS.modelTiersApi).toBe(modelTiersApi);
     expect(MACHINE_SCOPED_CLIENT_APIS.utilityModelsApi).toBe(utilityModelsApi);
-    expect(FEDERATED_ROUTE_SCENARIOS.configApi).toBe(configScenarios);
-    expect(FEDERATED_ROUTE_SCENARIOS.modelsConfigApi).toBe(modelsConfigScenarios);
-    expect(FEDERATED_ROUTE_SCENARIOS.modelTiersApi).toBe(modelTiersScenarios);
-    expect(FEDERATED_ROUTE_SCENARIOS.utilityModelsApi).toBe(utilityModelsScenarios);
-    expect(Object.keys(configScenarios)).toHaveLength(2);
-    expect(Object.keys(modelsConfigScenarios)).toHaveLength(5);
-    expect(Object.keys(modelTiersScenarios)).toHaveLength(2);
-    expect(Object.keys(utilityModelsScenarios)).toHaveLength(2);
+    expect(Object.keys(FEDERATED_ROUTE_SCENARIOS.configApi)).toHaveLength(2);
+    expect(Object.keys(FEDERATED_ROUTE_SCENARIOS.modelsConfigApi)).toHaveLength(5);
+    expect(Object.keys(FEDERATED_ROUTE_SCENARIOS.modelTiersApi)).toHaveLength(2);
+    expect(Object.keys(FEDERATED_ROUTE_SCENARIOS.utilityModelsApi)).toHaveLength(2);
     const routeRowCount = [
-      ...Object.values(configScenarios),
-      ...Object.values(modelsConfigScenarios),
-      ...Object.values(modelTiersScenarios),
-      ...Object.values(utilityModelsScenarios),
+      ...Object.values(FEDERATED_ROUTE_SCENARIOS.configApi),
+      ...Object.values(FEDERATED_ROUTE_SCENARIOS.modelsConfigApi),
+      ...Object.values(FEDERATED_ROUTE_SCENARIOS.modelTiersApi),
+      ...Object.values(FEDERATED_ROUTE_SCENARIOS.utilityModelsApi),
     ].reduce((total, fixtures) => total + fixtures.length, 0);
     expect(routeRowCount).toBe(11);
 
@@ -391,6 +380,94 @@ describe("federated route contract", () => {
     expect(vi.mocked(fetch).mock.calls).toHaveLength(11);
   });
 
+  it("runs the remaining staged client API scenarios through the sequential runner", async () => {
+    vi.stubEnv("BASE_URL", "./");
+    vi.stubGlobal("document", { baseURI: "https://pi.example.test/nested/pi-webui/" });
+
+    expect(MACHINE_SCOPED_CLIENT_APIS.skillsConfigApi).toBe(skillsConfigApi);
+    expect(MACHINE_SCOPED_CLIENT_APIS.piPackagesApi).toBe(piPackagesApi);
+    expect(MACHINE_SCOPED_CLIENT_APIS.piPackagePluginsApi).toBe(piPackagePluginsApi);
+    expect(MACHINE_SCOPED_CLIENT_APIS.memoryApi).toBe(memoryApi);
+    expect(MACHINE_SCOPED_CLIENT_APIS.learnedSkillsApi).toBe(learnedSkillsApi);
+    expect(MACHINE_SCOPED_CLIENT_APIS.pluginsApi).toBe(pluginsApi);
+    expect(MACHINE_SCOPED_CLIENT_APIS.recentProjectsApi).toBe(recentProjectsApi);
+    expect(Object.keys(FEDERATED_ROUTE_SCENARIOS.skillsConfigApi)).toHaveLength(6);
+    expect(Object.keys(FEDERATED_ROUTE_SCENARIOS.piPackagesApi)).toHaveLength(4);
+    expect(Object.keys(FEDERATED_ROUTE_SCENARIOS.piPackagePluginsApi)).toHaveLength(2);
+    expect(Object.keys(FEDERATED_ROUTE_SCENARIOS.memoryApi)).toHaveLength(1);
+    expect(Object.keys(FEDERATED_ROUTE_SCENARIOS.learnedSkillsApi)).toHaveLength(1);
+    expect(Object.keys(FEDERATED_ROUTE_SCENARIOS.pluginsApi)).toHaveLength(1);
+    expect(Object.keys(FEDERATED_ROUTE_SCENARIOS.recentProjectsApi)).toHaveLength(3);
+    const routeRowCount = [
+      ...Object.values(FEDERATED_ROUTE_SCENARIOS.skillsConfigApi),
+      ...Object.values(FEDERATED_ROUTE_SCENARIOS.piPackagesApi),
+      ...Object.values(FEDERATED_ROUTE_SCENARIOS.piPackagePluginsApi),
+      ...Object.values(FEDERATED_ROUTE_SCENARIOS.memoryApi),
+      ...Object.values(FEDERATED_ROUTE_SCENARIOS.learnedSkillsApi),
+      ...Object.values(FEDERATED_ROUTE_SCENARIOS.pluginsApi),
+      ...Object.values(FEDERATED_ROUTE_SCENARIOS.recentProjectsApi),
+    ].reduce((total, fixtures) => total + fixtures.length, 0);
+    expect(routeRowCount).toBe(18);
+
+    await runFederatedRouteScenarios({
+      apis: {
+        skillsConfigApi: MACHINE_SCOPED_CLIENT_APIS.skillsConfigApi,
+        piPackagesApi: MACHINE_SCOPED_CLIENT_APIS.piPackagesApi,
+        piPackagePluginsApi: MACHINE_SCOPED_CLIENT_APIS.piPackagePluginsApi,
+        memoryApi: MACHINE_SCOPED_CLIENT_APIS.memoryApi,
+        learnedSkillsApi: MACHINE_SCOPED_CLIENT_APIS.learnedSkillsApi,
+        pluginsApi: MACHINE_SCOPED_CLIENT_APIS.pluginsApi,
+        recentProjectsApi: MACHINE_SCOPED_CLIENT_APIS.recentProjectsApi,
+      },
+      scenarios: {
+        skillsConfigApi: FEDERATED_ROUTE_SCENARIOS.skillsConfigApi,
+        piPackagesApi: FEDERATED_ROUTE_SCENARIOS.piPackagesApi,
+        piPackagePluginsApi: FEDERATED_ROUTE_SCENARIOS.piPackagePluginsApi,
+        memoryApi: FEDERATED_ROUTE_SCENARIOS.memoryApi,
+        learnedSkillsApi: FEDERATED_ROUTE_SCENARIOS.learnedSkillsApi,
+        pluginsApi: FEDERATED_ROUTE_SCENARIOS.pluginsApi,
+        recentProjectsApi: FEDERATED_ROUTE_SCENARIOS.recentProjectsApi,
+      },
+      gatewayAddresses: GATEWAY_ADDRESSED_METHODS,
+      machineId,
+    });
+
+    // One transport per declared row: a row the runner skipped, or a method that stopped issuing a
+    // request, changes this count instead of passing on the table's own shape.
+    expect(vi.mocked(fetch).mock.calls).toHaveLength(18);
+  });
+
+  it("declares the complete twenty-module client API inventory", () => {
+    const inventoryModules = [
+      "sessionsApi",
+      "projectsApi",
+      "workspacesApi",
+      "terminalsApi",
+      "filesApi",
+      "gitApi",
+      "activityApi",
+      "piWebUiApi",
+      "configApi",
+      "modelsConfigApi",
+      "modelTiersApi",
+      "utilityModelsApi",
+      "skillsConfigApi",
+      "piPackagesApi",
+      "piPackagePluginsApi",
+      "memoryApi",
+      "learnedSkillsApi",
+      "pluginsApi",
+      "recentProjectsApi",
+      "workspaceTasksApi",
+    ] as const;
+
+    expect(Object.keys(MACHINE_SCOPED_CLIENT_APIS)).toEqual(inventoryModules);
+    expect(Object.keys(FEDERATED_ROUTE_SCENARIOS)).toEqual(inventoryModules);
+    // The gateway exception is a single declared method, not a mirror of the machine inventory: a
+    // module that merely names no gateway method must stay absent instead of mapping to an empty list.
+    expect(GATEWAY_ADDRESSED_METHODS).toEqual({ piWebUiApi: ["piWebUiRuntime"] });
+  });
+
   it("matches route patterns by strict segments without collapsing or decoding", () => {
     const pattern = "/sessions/:sessionId/pin";
     expect(strictPathMatches("/sessions/s%201/pin", pattern)).toBe(true);
@@ -404,34 +481,36 @@ describe("federated route contract", () => {
   it("covers machine-scoped client HTTP calls with remote proxy routes", async () => {
     vi.stubEnv("BASE_URL", "./");
     vi.stubGlobal("document", { baseURI: "https://pi.example.test/nested/pi-webui/" });
-    const fetchMock = vi.fn<FetchLike>(() => Promise.resolve(jsonResponse({})));
-    vi.stubGlobal("fetch", fetchMock);
 
-    await Promise.all([
-      ignoreParseFailure(memoryApi.snapshot(workspace.path, machineId)),
-      ignoreParseFailure(learnedSkillsApi.snapshot(workspace.path, machineId)),
-      ignoreParseFailure(pluginsApi.plugins(machineId)),
-      ignoreParseFailure(skillsConfigApi.list("/repo", machineId)),
-      ignoreParseFailure(skillsConfigApi.toggle({ cwd: "/repo", filePath: "/repo/.pi/skills/testing/SKILL.md", disableModelInvocation: true }, machineId)),
-      ignoreParseFailure(skillsConfigApi.search({ query: "testing", limit: 12 }, machineId)),
-      ignoreParseFailure(skillsConfigApi.install({ cwd: "/repo", package: "owner/repo@testing", scope: "project" }, machineId)),
-      ignoreParseFailure(skillsConfigApi.check({ cwd: "/repo", package: "owner/repo@testing", scope: "project" }, machineId)),
-      ignoreParseFailure(skillsConfigApi.update({ cwd: "/repo", package: "owner/repo@testing", scope: "project" }, machineId)),
-      ignoreParseFailure(piPackagesApi.packages(machineId)),
-      ignoreParseFailure(piPackagePluginsApi.list("/repo", machineId)),
-      ignoreParseFailure(piPackagePluginsApi.mutate({ action: "install", source: "npm:@acme/tools", scope: "project", cwd: "/repo" }, machineId)),
-      ignoreParseFailure(piPackagesApi.install("npm:@acme/tools", machineId)),
-      ignoreParseFailure(piPackagesApi.remove("npm:@acme/tools", "user", machineId)),
-      ignoreParseFailure(piPackagesApi.update("npm:@acme/tools", machineId)),
-    ]);
+    await runFederatedRouteScenarios({
+      apis: MACHINE_SCOPED_CLIENT_APIS,
+      scenarios: FEDERATED_ROUTE_SCENARIOS,
+      gatewayAddresses: GATEWAY_ADDRESSED_METHODS,
+      machineId,
+    });
 
-    const observedRoutes = uniqueHttpRoutes([
-      ...fetchMock.mock.calls.map((call) => fetchCallToRoute(call, machineId)),
-      routeFromMachineUrl("GET", workspaceImagePreviewUrl("p 1", "w 1", "diagram.svg", { machineId, modifiedAt: "2026-05-25T00:00:00.000Z" }), machineId),
-    ]);
+    // One transport per declared row for the complete registry: a row the runner skipped, or a
+    // method that stopped issuing a request, changes this count instead of passing on the tables'
+    // own shape. The row total itself is counted from the registry, so this pins execution rather
+    // than restating a literal.
+    const registryRowCount = scenarioRegistryRowCount(FEDERATED_ROUTE_SCENARIOS);
+    expect(registryRowCount).toBe(129);
+    expect(vi.mocked(fetch).mock.calls).toHaveLength(registryRowCount);
+
+    const observedRoutes = uniqueHttpRoutes(
+      vi.mocked(fetch).mock.calls
+        .filter((call) => hasMachineAddressSegment(toUrl(call[0]).pathname))
+        .map((call) => fetchCallToRoute(call, machineId)),
+    );
     const unmatched = observedRoutes.filter((route) => !matchesHttpRoute(route, FEDERATED_HTTP_ROUTES));
 
     expect(unmatched).toEqual([]);
+
+    // The image preview is a direct browser URL rather than a fixture fetch, so its route is
+    // asserted against the allowlist separately after fixture processing.
+    const imagePreviewRoute = routeFromMachineUrl("GET", workspaceImagePreviewUrl("p 1", "w 1", "diagram.svg", { machineId, modifiedAt: "2026-05-25T00:00:00.000Z" }), machineId);
+
+    expect(matchesHttpRoute(imagePreviewRoute, FEDERATED_HTTP_ROUTES)).toBe(true);
   });
 
   it("covers machine-scoped client WebSocket calls with remote proxy routes", () => {
@@ -707,10 +786,6 @@ function strictPathMatches(observedPath: string, pattern: string): boolean {
   });
 }
 
-async function ignoreParseFailure(promise: Promise<unknown>): Promise<void> {
-  await promise.catch(() => undefined);
-}
-
 function fetchCallToRoute(call: Parameters<FetchLike>, scopedMachineId: string): ObservedHttpRoute {
   const [url, init] = call;
   return routeFromMachineUrl((init?.method ?? "GET").toUpperCase(), url, scopedMachineId);
@@ -749,6 +824,14 @@ function uniqueHttpRoutes(routes: ObservedHttpRoute[]): ObservedHttpRoute[] {
     seen.add(key);
     return true;
   });
+}
+
+function scenarioRowCount(table: AnyScenarioTable): number {
+  return Object.values(table).reduce((total, fixtures) => total + fixtures.length, 0);
+}
+
+function scenarioRegistryRowCount(registry: Readonly<Record<string, AnyScenarioTable>>): number {
+  return Object.values(registry).reduce((total, table) => total + scenarioRowCount(table), 0);
 }
 
 function uniqueStrings(values: string[]): string[] {
