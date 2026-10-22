@@ -34,6 +34,9 @@ import { findOptionalTemplateEventHandlerAfterMarker, templateClickHandlerForTex
 // eslint-disable-next-line @typescript-eslint/require-await -- Keep the mocked adapter promise-shaped for handler tests.
 vi.mock("../clipboard", () => ({ writeClipboardText: vi.fn(async () => true) }));
 
+const ZERO_WIDTH_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAAAAAAFCAIAAADkJHr2AAAAFElEQVR4nGPkEpFjwABMmEJUEQUAG9AARjs4PkcAAAAASUVORK5CYII=";
+const ZERO_HEIGHT_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAcAAAAACAIAAABWNfA8AAAAFElEQVR4nGPkEpFjwABMmEJUEQUAG9AARjs4PkcAAAAASUVORK5CYII=";
+
 describe("chatUserMessageActionAvailability", () => {
   const message: ChatLine = {
     role: "user",
@@ -82,6 +85,18 @@ describe("chatUserMessageActionAvailability", () => {
         { type: "text", text: "[image]", missingImage: true },
       ],
     })).toEqual({ text: "[image]\n[image]", attachments: [], unrestorableImageCount: 1 });
+  });
+
+  it("counts zero-dimension PNGs as unrestorable in the edit projection", () => {
+    const draft = chatMessageEditDraft({
+      role: "user",
+      parts: [
+        { type: "image", mimeType: "image/png", data: ZERO_WIDTH_PNG },
+        { type: "image", mimeType: "image/png", data: ZERO_HEIGHT_PNG },
+      ],
+    });
+
+    expect(draft).toEqual({ text: "", attachments: [], unrestorableImageCount: 2 });
   });
 });
 

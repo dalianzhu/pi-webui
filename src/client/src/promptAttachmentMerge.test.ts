@@ -78,4 +78,28 @@ describe("mergePromptAttachments", () => {
     ]);
     expect(result.omittedForCapacity).toBe(1);
   });
+
+  it("counts each omitted restored identity once after capacity is reached", () => {
+    const existing = Array.from({ length: 15 }, (_, index) => pending(`existing-${String(index)}`, {
+      kind: "file",
+      name: `file-${String(index)}.bin`,
+      mimeType: "application/octet-stream",
+      data: `existing-${String(index)}`,
+      size: 1,
+    }));
+    const result = mergePromptAttachments(
+      existing,
+      [
+        { ...captured({ data: PNG, name: "a.png" }), restored: true as const },
+        { ...captured({ data: JPEG, mimeType: "image/jpeg", name: "b.jpg", size: 633 }), restored: true as const },
+        { ...captured({ data: JPEG, mimeType: "image/jpeg", name: "duplicate-b.jpg", size: 633 }), restored: true as const },
+      ],
+      () => "new-id",
+      16,
+    );
+
+    expect(result.attachments).toHaveLength(16);
+    expect(result.attachments.at(-1)).toMatchObject({ data: PNG, restored: true });
+    expect(result.omittedForCapacity).toBe(1);
+  });
 });

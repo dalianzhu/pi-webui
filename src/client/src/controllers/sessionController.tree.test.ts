@@ -151,7 +151,7 @@ describe("SessionController session tree navigation", () => {
     expect(state.messages).toEqual([{ role: "assistant", parts: [{ type: "text", text: "fresh branch" }] }]);
     expect(state.treeDialog).toBeUndefined();
     expect(loadDraft(cacheKey)).toBe("edit original prompt");
-    expect(replacePromptEditorDraft).toHaveBeenCalledWith({ machineId: "local", sessionId: oldSession.id, text: "edit original prompt" });
+    expect(replacePromptEditorDraft).toHaveBeenCalledExactlyOnceWith({ machineId: "local", sessionId: oldSession.id, text: "edit original prompt" });
     expect(socket.connectedSessionIds).toEqual([oldSession.id, oldSession.id]);
   });
 

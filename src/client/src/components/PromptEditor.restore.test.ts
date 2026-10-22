@@ -52,11 +52,11 @@ function send(editor: PromptEditor): void {
 
 describe("PromptEditor attachment restore", () => {
   it("restores images into the scoped draft and sends them inline despite a folder preference", () => {
+    saveAttachmentDelivery("folder");
     const editor = new PromptEditor();
     const store = editor.attachmentDrafts;
     editor.machineId = "local";
     editor.sessionId = "session-1";
-    saveAttachmentDelivery("folder");
     const onSend = vi.fn<NonNullable<PromptEditor["onSend"]>>();
     editor.onSend = onSend;
 
@@ -136,6 +136,18 @@ describe("PromptEditor attachment restore", () => {
 
     expect(attachmentCount(editor)).toBe(16);
     expect(templateText(editor.render())).toContain("Only 16 attachments can be sent, so 1 was not added.");
+  });
+
+  it("clears and persists a stale notice for a complete rich edit with no images", () => {
+    const editor = new PromptEditor();
+    editor.machineId = "local";
+    editor.sessionId = "session-complete";
+
+    replaceDraft(editor, { text: "partial", unrestorableImageCount: 1 });
+    replaceDraft(editor, { text: "complete", restored: [], unrestorableImageCount: 0 });
+
+    expect(Reflect.get(editor, "attachmentNotice")).toBeUndefined();
+    expect(editor.attachmentDrafts.read("local:session-complete")).toEqual({ attachments: [] });
   });
 
   it("does not alter attachment state for a text-only replacement", () => {

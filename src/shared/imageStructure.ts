@@ -67,7 +67,7 @@ function isCompletePng(bytes: Uint8Array): boolean {
     const type = textAt(bytes, offset + 4, 4);
     if (chunkCount === 0) {
       if (type !== "IHDR" || length !== 13) return false;
-      hasImageHeader = readUint32BigEndian(bytes, offset + 16) > 0 && readUint32BigEndian(bytes, offset + 20) > 0;
+      hasImageHeader = readUint32BigEndian(bytes, offset + 8) > 0 && readUint32BigEndian(bytes, offset + 12) > 0;
       if (!hasImageHeader) return false;
     }
     if (type === "IDAT" && length > 0) hasImageData = true;

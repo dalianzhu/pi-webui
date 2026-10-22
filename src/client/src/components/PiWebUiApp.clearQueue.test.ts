@@ -8,6 +8,7 @@ import { PI_WEBUI_CAPABILITIES } from "../../../shared/capabilities";
 // callback wiring in a node environment (no DOM harness). See
 // templateInspection.testSupport for the proportionality rationale.
 import { templateValueAfterMarker } from "../templateInspection.testSupport";
+import type { ChatMessageEditDraft } from "./ChatView";
 import { PiWebUiApp } from "./PiWebUiApp";
 
 afterEach(() => {
@@ -34,9 +35,14 @@ describe("PiWebUiApp per-message action wiring", () => {
     expect(templateForkFromHereCallback(secondRender)).toBe(firstFork);
     const focusChatComposer = vi.fn(() => Promise.resolve());
     if (!Reflect.set(app, "focusChatComposer", focusChatComposer)) throw new Error("Could not replace prompt focus boundary");
-    await firstEdit("assistant-1", { text: "Revise this", attachments: [], unrestorableImageCount: 0 });
+    const editDraft: ChatMessageEditDraft = {
+      text: "Revise this",
+      attachments: [{ kind: "image", name: "message.png", mimeType: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC", size: 69 }],
+      unrestorableImageCount: 0,
+    };
+    await firstEdit("assistant-1", editDraft);
     await firstFork("user-2");
-    expect(editFromHere).toHaveBeenCalledExactlyOnceWith("assistant-1", { text: "Revise this", attachments: [], unrestorableImageCount: 0 });
+    expect(editFromHere).toHaveBeenCalledExactlyOnceWith("assistant-1", editDraft);
     expect(focusChatComposer).toHaveBeenCalledOnce();
     expect(forkFromHere).toHaveBeenCalledExactlyOnceWith("user-2");
   });
@@ -110,7 +116,7 @@ type RenderChatView = (this: PiWebUiApp, state: AppState, session: SessionInfo) 
 type RenderApp = (this: PiWebUiApp) => TemplateResult;
 type ClearServerQueueCallback = () => void;
 type CompactCallback = () => void;
-type EditFromHereCallback = (assistantEntryId: string, draft: { text: string; attachments: []; unrestorableImageCount: number }) => void | Promise<void>;
+type EditFromHereCallback = (assistantEntryId: string, draft: ChatMessageEditDraft) => void | Promise<void>;
 type ForkFromHereCallback = (userEntryId: string) => void | Promise<void>;
 
 function createApp(): PiWebUiApp {

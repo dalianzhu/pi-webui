@@ -15,6 +15,8 @@ import {
   type MessagePage,
 } from "./sessionController.testSupport";
 
+const RESTORED_IMAGE = { kind: "image" as const, name: "message.png", mimeType: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC", size: 69 };
+
 function page(text: string): MessagePage {
   return { messages: [{ role: "assistant", content: text }], start: 0, total: 1 };
 }
@@ -46,8 +48,8 @@ describe("SessionController per-message actions", () => {
 
     await controller.editFromHere("assistant-entry-1", {
       text: "Revise this request",
-      attachments: [],
-      unrestorableImageCount: 0,
+      attachments: [RESTORED_IMAGE],
+      unrestorableImageCount: 1,
     });
 
     expect(editFromHere).toHaveBeenCalledExactlyOnceWith(oldSession, "assistant-entry-1", "local");
@@ -57,8 +59,8 @@ describe("SessionController per-message actions", () => {
       machineId: "local",
       sessionId: oldSession.id,
       text: "Revise this request",
-      restored: [],
-      unrestorableImageCount: 0,
+      restored: [RESTORED_IMAGE],
+      unrestorableImageCount: 1,
     });
   });
 

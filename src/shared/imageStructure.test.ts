@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { decodeStrictBase64, isStructurallyCompleteImage } from "./imageStructure.js";
 
 const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC";
+const ZERO_WIDTH_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAAAAAAFCAIAAADkJHr2AAAAFElEQVR4nGPkEpFjwABMmEJUEQUAG9AARjs4PkcAAAAASUVORK5CYII=";
+const ZERO_HEIGHT_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAcAAAAACAIAAABWNfA8AAAAFElEQVR4nGPkEpFjwABMmEJUEQUAG9AARjs4PkcAAAAASUVORK5CYII=";
 const JPEG = "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDi6KKK+ZP3E//Z";
 const PROGRESSIVE_JPEG = "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wgARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAVAQEBAAAAAAAAAAAAAAAAAAAFBv/aAAwDAQACEAMQAAABigy4/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABBQJ//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAwEBPwF//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAgEBPwF//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQAGPwJ//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPyF//9oADAMBAAIAAwAAABAH/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAwEBPxB//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAgEBPxB//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxB//9k=";
 const GIF = "R0lGODdhAQABAIEAAP8AAAAAAAAAAAAAACwAAAAAAQABAAAIBAABBAQAOw==";
@@ -73,9 +75,9 @@ describe("isStructurallyCompleteImage", () => {
     );
     const gifShell = concat(
       [0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00],
-      [0x2c, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x02, 0x00, 0x00, 0x3b],
+      [0x2c, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x02, 0x00, 0x3b],
     );
-    const vp8xOnly = riffWebp(...riffChunk("VP8X", Array.from({ length: 10 }, () => 0)));
+    const anmfWithoutImage = riffWebp(...riffChunk("ANMF", Array.from({ length: 16 }, () => 0)));
     const inconsistentWebp = bytes(WEBP).slice();
     inconsistentWebp[4] = 0;
 
@@ -85,9 +87,14 @@ describe("isStructurallyCompleteImage", () => {
     expect(isStructurallyCompleteImage(jpegShell, "image/jpeg")).toBe(false);
     expect(isStructurallyCompleteImage(concat([0xff, 0xd8, 0xff, 0xd9], []), "image/jpeg")).toBe(false);
     expect(isStructurallyCompleteImage(gifShell, "image/gif")).toBe(false);
-    expect(isStructurallyCompleteImage(vp8xOnly, "image/webp")).toBe(false);
+    expect(isStructurallyCompleteImage(anmfWithoutImage, "image/webp")).toBe(false);
     expect(isStructurallyCompleteImage(inconsistentWebp, "image/webp")).toBe(false);
     expect(isStructurallyCompleteImage(png, "image/jpeg")).toBe(false);
     expect(() => isStructurallyCompleteImage(new Uint8Array([1, 2, 3]), "image/png")).not.toThrow();
+  });
+
+  it("rejects PNGs whose valid IHDR declares a zero width or height", () => {
+    expect(isStructurallyCompleteImage(bytes(ZERO_WIDTH_PNG), "image/png")).toBe(false);
+    expect(isStructurallyCompleteImage(bytes(ZERO_HEIGHT_PNG), "image/png")).toBe(false);
   });
 });

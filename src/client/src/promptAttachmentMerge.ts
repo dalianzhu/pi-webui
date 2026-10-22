@@ -28,6 +28,7 @@ export function mergePromptAttachments(
 
   const limit = Math.max(0, Math.floor(capacity));
   let omittedForCapacity = 0;
+  const processedRestoredIdentities = new Set<string>();
   for (const attachment of incoming) {
     if (attachment.restored === true) {
       const identity = attachmentIdentity(attachment);
@@ -42,8 +43,11 @@ export function mergePromptAttachments(
             id: current.id,
           };
         }
+        processedRestoredIdentities.add(identity);
         continue;
       }
+      if (processedRestoredIdentities.has(identity)) continue;
+      processedRestoredIdentities.add(identity);
     }
     if (attachments.length >= limit) {
       omittedForCapacity += 1;

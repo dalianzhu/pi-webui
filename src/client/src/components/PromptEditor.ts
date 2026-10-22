@@ -261,7 +261,13 @@ export class PromptEditor extends LitElement {
     this.replaceText(draft.text);
     const invalid = draft.unrestorableImageCount ?? 0;
     const restored = draft.restored ?? [];
-    if (restored.length === 0 && invalid <= 0) return;
+    if (restored.length === 0 && invalid <= 0) {
+      if (draft.restored !== undefined || draft.unrestorableImageCount !== undefined) {
+        this.attachmentNotice = undefined;
+        this.persistAttachmentDraft();
+      }
+      return;
+    }
 
     const existing = this.attachments;
     const merged = mergePromptAttachments(
