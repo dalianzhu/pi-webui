@@ -42,6 +42,107 @@ const MOVE_TASKS_REQUEST = {
   },
 };
 
+const pinBody = {
+  id: "s 1",
+  path: "/repo/session.jsonl",
+  cwd: "/repo",
+  created: "2026-10-22T00:00:00.000Z",
+  modified: "2026-10-22T00:00:00.000Z",
+  messageCount: 0,
+  firstMessage: "",
+  pinned: true,
+};
+const unpinBody = { ...pinBody, pinned: false };
+const forceCleanupBody = {
+  generatedAt: "2026-10-22T00:00:00.000Z",
+  thresholds: {},
+  projects: [],
+  totals: { archiveCount: 0, deleteCount: 0 },
+  archivedSessionIds: [],
+  deletedSessionIds: [],
+};
+const usageInput = { projectPath: "/repo", liveCwds: ["/repo", "/repo-feature"] };
+const zeroUsage = {
+  input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, sessionCount: 0,
+};
+const liveUsage = {
+  input: 4, output: 8, cacheRead: 0, cacheWrite: 0, cost: 0.25, sessionCount: 2,
+};
+const usageBody = {
+  projectPath: "/repo",
+  buckets: { live: liveUsage, retired: zeroUsage, archived: zeroUsage },
+  total: liveUsage,
+  generatedAt: "2026-10-22T00:00:00.000Z",
+};
+const usageCountBody = { sessionCount: 2 };
+const missingRemoteRouteBody = { error: "API route not found" };
+
+interface RemoteSessionProxyCase {
+  readonly name: string;
+  readonly gatewayPath: string;
+  readonly payload?: object;
+  readonly remotePath: string;
+  readonly remoteBody: unknown;
+  readonly targetStatus: number;
+  readonly targetBody: unknown;
+}
+
+const REMOTE_SESSION_PROXY_CASES: readonly RemoteSessionProxyCase[] = [
+  {
+    name: "pin",
+    gatewayPath: "/sessions/s%201/pin",
+    payload: { cwd: "/repo" },
+    remotePath: "/api/sessions/s%201/pin",
+    remoteBody: { cwd: "/repo" },
+    targetStatus: 200,
+    targetBody: pinBody,
+  },
+  {
+    name: "unpin",
+    gatewayPath: "/sessions/s%201/unpin",
+    payload: { cwd: "/repo" },
+    remotePath: "/api/sessions/s%201/unpin",
+    remoteBody: { cwd: "/repo" },
+    targetStatus: 200,
+    targetBody: unpinBody,
+  },
+  {
+    name: "force cleanup",
+    gatewayPath: "/sessions/cleanup/force",
+    remotePath: "/api/sessions/cleanup/force",
+    remoteBody: undefined,
+    targetStatus: 200,
+    targetBody: forceCleanupBody,
+  },
+  {
+    name: "project usage",
+    gatewayPath: "/sessions/project-usage",
+    payload: usageInput,
+    remotePath: "/api/sessions/project-usage",
+    remoteBody: usageInput,
+    targetStatus: 200,
+    targetBody: usageBody,
+  },
+  {
+    name: "project usage count",
+    gatewayPath: "/sessions/project-usage/count",
+    payload: usageInput,
+    remotePath: "/api/sessions/project-usage/count",
+    remoteBody: usageInput,
+    targetStatus: 200,
+    targetBody: usageCountBody,
+  },
+  {
+    name: "pin missing from an older remote",
+    gatewayPath: "/sessions/s%201/pin",
+    payload: { cwd: "/repo" },
+    remotePath: "/api/sessions/s%201/pin",
+    remoteBody: { cwd: "/repo" },
+    targetStatus: 404,
+    targetBody: missingRemoteRouteBody,
+  },
+];
+
 describe("buildApp remote machine proxy routes", () => {
   it("registers task handlers ahead of the generic proxy and translates encoded task paths", async () => {
     expect(FEDERATED_HTTP_ROUTES).toEqual(expect.arrayContaining(TASK_ROUTE_SPECS));
@@ -517,6 +618,66 @@ describe("buildApp remote machine proxy routes", () => {
       `/api/sessions/${sessionId}/reorder`,
       body,
     );
+  });
+
+  it.each(REMOTE_SESSION_PROXY_CASES)("forwards the $name route to the selected machine", async (proxyCase) => {
+    const request = vi.fn<MachineClient["request"]>(() => Promise.resolve({
+      statusCode: proxyCase.targetStatus,
+      headers: { "content-type": "application/json" },
+      body: Readable.from([JSON.stringify(proxyCase.targetBody)]),
+    }));
+    const machineId = await addRemoteMachine(request);
+    const url = `/api/machines/${machineId}${proxyCase.gatewayPath}`;
+
+    const response = await appTestContext.app.inject({
+      method: "POST",
+      url,
+      ...(proxyCase.payload === undefined ? {} : { payload: proxyCase.payload }),
+    });
+
+    expect(response.statusCode).toBe(proxyCase.targetStatus);
+    expect(response.json()).toEqual(proxyCase.targetBody);
+    expect(response.body).toBe(JSON.stringify(proxyCase.targetBody));
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledWith("POST", proxyCase.remotePath, proxyCase.remoteBody);
+    expect(appTestContext.sessionDaemonRequests).toHaveLength(0);
+  });
+
+  it("returns 404 for an unknown machine on the registered pin route without contacting a remote", async () => {
+    const request = vi.fn<MachineClient["request"]>();
+    appTestContext.remoteClient = fakeRemoteClient({ request });
+
+    const response = await appTestContext.app.inject({
+      method: "POST",
+      url: "/api/machines/missing/sessions/s%201/pin",
+      payload: { cwd: "/repo" },
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({ error: "Machine not found" });
+    expect(request).not.toHaveBeenCalled();
+    expect(appTestContext.sessionDaemonRequests).toHaveLength(0);
+  });
+
+  it("maps a remote pin transport failure to 502 without reaching the local daemon", async () => {
+    const request = vi.fn<MachineClient["request"]>(() => Promise.reject(new RemoteMachineRequestError("connection refused", 502)));
+    const machineId = await addRemoteMachine(request);
+
+    const response = await appTestContext.app.inject({
+      method: "POST",
+      url: `/api/machines/${machineId}/sessions/s%201/pin`,
+      payload: { cwd: "/repo" },
+    });
+
+    expect(response.statusCode).toBe(502);
+    expect(response.json()).toEqual({
+      error: "Remote machine unavailable",
+      machineId,
+      statusCode: 502,
+      detail: "connection refused",
+    });
+    expect(request).toHaveBeenCalledWith("POST", "/api/sessions/s%201/pin", { cwd: "/repo" });
+    expect(appTestContext.sessionDaemonRequests).toHaveLength(0);
   });
 
   it("proxies only the four allowlisted remote notification HTTP routes", async () => {
