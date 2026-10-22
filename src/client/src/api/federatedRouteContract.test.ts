@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionRef } from "../../../shared/apiTypes";
 import { FEDERATED_HTTP_ROUTES, FEDERATED_WEBSOCKET_ROUTES, SESSION_TREE_NAVIGATION_PROXY_TIMEOUT_MS, type FederatedHttpRouteSpec } from "../../../shared/federatedRoutes";
 import { resolveAppUrl } from "../appUrl";
-import { activityApi, configApi, filesApi, gitApi, learnedSkillsApi, memoryApi, modelsConfigApi, piPackagePluginsApi, piPackagesApi, piWebUiApi, pluginsApi, projectsApi, sessionsApi, skillsConfigApi, terminalsApi, workspacesApi } from "./clients";
-import { FEDERATED_ROUTE_SCENARIOS, GATEWAY_ADDRESSED_METHODS, MACHINE_SCOPED_CLIENT_APIS, activityScenarios, filesScenarios, gitScenarios, projectsScenarios, sessionsScenarios, terminalsScenarios, workspace, workspaceTasksScenarios, workspacesScenarios, type Fixture, type ScenarioTable } from "./federatedRouteScenarios.testSupport";
+import { activityApi, configApi, filesApi, gitApi, learnedSkillsApi, memoryApi, modelTiersApi, modelsConfigApi, piPackagePluginsApi, piPackagesApi, piWebUiApi, pluginsApi, projectsApi, sessionsApi, skillsConfigApi, terminalsApi, utilityModelsApi, workspacesApi } from "./clients";
+import { FEDERATED_ROUTE_SCENARIOS, GATEWAY_ADDRESSED_METHODS, MACHINE_SCOPED_CLIENT_APIS, activityScenarios, configScenarios, filesScenarios, gitScenarios, modelTiersScenarios, modelsConfigScenarios, projectsScenarios, sessionsScenarios, terminalsScenarios, utilityModelsScenarios, workspace, workspaceTasksScenarios, workspacesScenarios, type Fixture, type ScenarioTable } from "./federatedRouteScenarios.testSupport";
 import { globalSessionEvents, realtimeEvents, sessionEvents, terminalSocket } from "./sockets";
 import { workspaceImagePreviewUrl } from "./urls";
 import { workspaceTasksApi } from "./workspaceTasksApi";
@@ -345,6 +345,52 @@ describe("federated route contract", () => {
     expect(vi.mocked(fetch).mock.calls).toHaveLength(35);
   });
 
+  it("runs the staged configuration client API scenarios through the sequential runner", async () => {
+    vi.stubEnv("BASE_URL", "./");
+    vi.stubGlobal("document", { baseURI: "https://pi.example.test/nested/pi-webui/" });
+
+    expect(MACHINE_SCOPED_CLIENT_APIS.configApi).toBe(configApi);
+    expect(MACHINE_SCOPED_CLIENT_APIS.modelsConfigApi).toBe(modelsConfigApi);
+    expect(MACHINE_SCOPED_CLIENT_APIS.modelTiersApi).toBe(modelTiersApi);
+    expect(MACHINE_SCOPED_CLIENT_APIS.utilityModelsApi).toBe(utilityModelsApi);
+    expect(FEDERATED_ROUTE_SCENARIOS.configApi).toBe(configScenarios);
+    expect(FEDERATED_ROUTE_SCENARIOS.modelsConfigApi).toBe(modelsConfigScenarios);
+    expect(FEDERATED_ROUTE_SCENARIOS.modelTiersApi).toBe(modelTiersScenarios);
+    expect(FEDERATED_ROUTE_SCENARIOS.utilityModelsApi).toBe(utilityModelsScenarios);
+    expect(Object.keys(configScenarios)).toHaveLength(2);
+    expect(Object.keys(modelsConfigScenarios)).toHaveLength(5);
+    expect(Object.keys(modelTiersScenarios)).toHaveLength(2);
+    expect(Object.keys(utilityModelsScenarios)).toHaveLength(2);
+    const routeRowCount = [
+      ...Object.values(configScenarios),
+      ...Object.values(modelsConfigScenarios),
+      ...Object.values(modelTiersScenarios),
+      ...Object.values(utilityModelsScenarios),
+    ].reduce((total, fixtures) => total + fixtures.length, 0);
+    expect(routeRowCount).toBe(11);
+
+    await runFederatedRouteScenarios({
+      apis: {
+        configApi: MACHINE_SCOPED_CLIENT_APIS.configApi,
+        modelsConfigApi: MACHINE_SCOPED_CLIENT_APIS.modelsConfigApi,
+        modelTiersApi: MACHINE_SCOPED_CLIENT_APIS.modelTiersApi,
+        utilityModelsApi: MACHINE_SCOPED_CLIENT_APIS.utilityModelsApi,
+      },
+      scenarios: {
+        configApi: FEDERATED_ROUTE_SCENARIOS.configApi,
+        modelsConfigApi: FEDERATED_ROUTE_SCENARIOS.modelsConfigApi,
+        modelTiersApi: FEDERATED_ROUTE_SCENARIOS.modelTiersApi,
+        utilityModelsApi: FEDERATED_ROUTE_SCENARIOS.utilityModelsApi,
+      },
+      gatewayAddresses: GATEWAY_ADDRESSED_METHODS,
+      machineId,
+    });
+
+    // One transport per declared row: a row the runner skipped, or a method that stopped issuing a
+    // request, changes this count instead of passing on the table's own shape.
+    expect(vi.mocked(fetch).mock.calls).toHaveLength(11);
+  });
+
   it("matches route patterns by strict segments without collapsing or decoding", () => {
     const pattern = "/sessions/:sessionId/pin";
     expect(strictPathMatches("/sessions/s%201/pin", pattern)).toBe(true);
@@ -364,9 +410,6 @@ describe("federated route contract", () => {
     await Promise.all([
       ignoreParseFailure(memoryApi.snapshot(workspace.path, machineId)),
       ignoreParseFailure(learnedSkillsApi.snapshot(workspace.path, machineId)),
-      ignoreParseFailure(configApi.config(machineId)),
-      ignoreParseFailure(configApi.saveConfig({ spawnSessions: true }, machineId)),
-      ignoreParseFailure(modelsConfigApi.discover({ providerName: "custom", provider: { api: "openai-completions", baseUrl: "https://models.example.test/v1", apiKey: "$MODEL_API_KEY" } }, machineId)),
       ignoreParseFailure(pluginsApi.plugins(machineId)),
       ignoreParseFailure(skillsConfigApi.list("/repo", machineId)),
       ignoreParseFailure(skillsConfigApi.toggle({ cwd: "/repo", filePath: "/repo/.pi/skills/testing/SKILL.md", disableModelInvocation: true }, machineId)),
