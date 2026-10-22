@@ -3,7 +3,7 @@ import type { SessionRef, Workspace } from "../../../shared/apiTypes";
 import { FEDERATED_HTTP_ROUTES, FEDERATED_WEBSOCKET_ROUTES, SESSION_TREE_NAVIGATION_PROXY_TIMEOUT_MS, type FederatedHttpRouteSpec } from "../../../shared/federatedRoutes";
 import { resolveAppUrl } from "../appUrl";
 import { activityApi, configApi, filesApi, gitApi, learnedSkillsApi, memoryApi, modelsConfigApi, piPackagePluginsApi, piPackagesApi, piWebUiApi, pluginsApi, projectsApi, sessionsApi, skillsConfigApi, terminalsApi, workspacesApi } from "./clients";
-import { FEDERATED_ROUTE_SCENARIOS, GATEWAY_ADDRESSED_METHODS, MACHINE_SCOPED_CLIENT_APIS, type Fixture, type ScenarioTable } from "./federatedRouteScenarios.testSupport";
+import { FEDERATED_ROUTE_SCENARIOS, GATEWAY_ADDRESSED_METHODS, MACHINE_SCOPED_CLIENT_APIS, sessionsScenarios, type Fixture, type ScenarioTable } from "./federatedRouteScenarios.testSupport";
 import { globalSessionEvents, realtimeEvents, sessionEvents, terminalSocket } from "./sockets";
 import { workspaceImagePreviewUrl } from "./urls";
 import { workspaceTasksApi } from "./workspaceTasksApi";
@@ -268,6 +268,41 @@ describe("federated route contract", () => {
     ]);
   });
 
+  it("runs the staged sessions client API scenarios through the sequential runner", async () => {
+    vi.stubEnv("BASE_URL", "./");
+    vi.stubGlobal("document", { baseURI: "https://pi.example.test/nested/pi-webui/" });
+
+    expect(MACHINE_SCOPED_CLIENT_APIS.sessionsApi).toBe(sessionsApi);
+    expect(FEDERATED_ROUTE_SCENARIOS.sessionsApi).toBe(sessionsScenarios);
+    expect(Object.keys(sessionsScenarios)).toHaveLength(60);
+
+    await runFederatedRouteScenarios({
+      apis: { sessionsApi: MACHINE_SCOPED_CLIENT_APIS.sessionsApi },
+      scenarios: { sessionsApi: FEDERATED_ROUTE_SCENARIOS.sessionsApi },
+      gatewayAddresses: GATEWAY_ADDRESSED_METHODS,
+      machineId,
+    });
+  });
+
+  it("resolves a staged session call within the application root of a nested deployment", async () => {
+    vi.stubEnv("BASE_URL", "./");
+    vi.stubGlobal("document", { baseURI: "https://pi.example.test/nested/pi-webui/" });
+    const fetchMock = vi.fn<FetchLike>(() => Promise.resolve(jsonResponse({})));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await ignoreParseFailure(sessionsApi.reorder(session, {
+      cwd: workspace.path,
+      scope: { kind: "root", cwd: workspace.path },
+      pinned: false,
+      catalogCwds: [workspace.path],
+      orderedSessions: [session],
+    }, machineId));
+
+    expect(fetchMock.mock.calls.map(([url]) => toUrl(url).toString())).toEqual([
+      `https://pi.example.test/nested/pi-webui/api/machines/${encodeURIComponent(machineId)}/sessions/${encodeURIComponent(session.id)}/reorder`,
+    ]);
+  });
+
   it("matches route patterns by strict segments without collapsing or decoding", () => {
     const pattern = "/sessions/:sessionId/pin";
     expect(strictPathMatches("/sessions/s%201/pin", pattern)).toBe(true);
@@ -326,61 +361,6 @@ describe("federated route contract", () => {
       ignoreParseFailure(filesApi.files("/repo", "README", { kind: "tracked", mode: "file", projectId: "p 1", workspaceId: "w 1", machineId, workspaceScoped: true })),
       ignoreParseFailure(gitApi.gitStatus("p 1", "w 1", machineId)),
       ignoreParseFailure(gitApi.gitDiff("p 1", "w 1", { path: "README.md", staged: true }, machineId)),
-      ignoreParseFailure(sessionsApi.sessions("/repo", machineId)),
-      ignoreParseFailure(sessionsApi.sessionDefaults("/repo", machineId)),
-      ignoreParseFailure(sessionsApi.updateSessionDefaults("/repo", { model: { provider: "openai", modelId: "gpt" } }, machineId)),
-      ignoreParseFailure(sessionsApi.unreadCatalog(machineId)),
-      ignoreParseFailure(sessionsApi.acknowledgeUnread(session, "catalog-a", 7, machineId)),
-      ignoreParseFailure(sessionsApi.startSession("/repo", machineId)),
-      ignoreParseFailure(sessionsApi.reorder(session, {
-        cwd: workspace.path,
-        scope: { kind: "root" as const, cwd: workspace.path },
-        pinned: false,
-        catalogCwds: [workspace.path],
-        orderedSessions: [session],
-      }, machineId)),
-      ignoreParseFailure(sessionsApi.cleanupPreview({ archiveIdleDays: 14 }, machineId)),
-      ignoreParseFailure(sessionsApi.cleanup({ archiveIdleDays: 14, deleteArchivedDays: 30, projectCwds: ["/repo"] }, machineId)),
-      ignoreParseFailure(sessionsApi.archiveMany([session], machineId)),
-      ignoreParseFailure(sessionsApi.deleteArchivedMany([session], machineId)),
-      ignoreParseFailure(sessionsApi.messages(session, { limit: 20, before: 10 }, machineId)),
-      ignoreParseFailure(sessionsApi.status(session, machineId)),
-      ignoreParseFailure(sessionsApi.rememberCurrentModelPolicy(session, machineId)),
-      ignoreParseFailure(sessionsApi.systemPrompt(session, machineId)),
-      ignoreParseFailure(sessionsApi.extensionEntries(session, machineId)),
-      ignoreParseFailure(sessionsApi.streamSnapshot(session, machineId)),
-      ignoreParseFailure(sessionsApi.clearQueue(session, machineId)),
-      ignoreParseFailure(sessionsApi.models(session, machineId)),
-      ignoreParseFailure(sessionsApi.setModel(session, "openai", "gpt", machineId)),
-      ignoreParseFailure(sessionsApi.cycleModel(session, "forward", machineId)),
-      ignoreParseFailure(sessionsApi.thinkingLevels(session, machineId)),
-      ignoreParseFailure(sessionsApi.setThinkingLevel(session, "medium", machineId)),
-      ignoreParseFailure(sessionsApi.cycleThinkingLevel(session, machineId)),
-      ignoreParseFailure(sessionsApi.commands(session, machineId)),
-      ignoreParseFailure(sessionsApi.prompt(session, "hello", "followUp", machineId)),
-      ignoreParseFailure(sessionsApi.saveAttachments(session, [{ kind: "image", mimeType: "image/png", data: "QUJD", name: "shot.png" }], machineId, "uploads")),
-      ignoreParseFailure(sessionsApi.shell(session, "ls", machineId)),
-      ignoreParseFailure(sessionsApi.runCommand(session, "/help", machineId)),
-      ignoreParseFailure(sessionsApi.respondToCommand(session, "req 1", "yes", machineId)),
-      ignoreParseFailure(sessionsApi.navigateTree(session, { targetId: "entry-1", expectedLeafId: "leaf-1", summary: { mode: "none" } }, machineId)),
-      ignoreParseFailure(sessionsApi.editFromHere(session, "assistant-1", machineId)),
-      ignoreParseFailure(sessionsApi.forkFromHere(session, "user-2", machineId)),
-      ignoreParseFailure(sessionsApi.abort(session, machineId)),
-      ignoreParseFailure(sessionsApi.stop(session, machineId)),
-      ignoreParseFailure(sessionsApi.archive(session, machineId)),
-      ignoreParseFailure(sessionsApi.archiveWithDescendants(session, machineId)),
-      ignoreParseFailure(sessionsApi.restore(session, machineId)),
-      ignoreParseFailure(sessionsApi.deleteArchived(session, machineId)),
-      ignoreParseFailure(sessionsApi.reloadSession(session, machineId)),
-      ignoreParseFailure(sessionsApi.detachParent(session, machineId)),
-      ignoreParseFailure(sessionsApi.authProviders({ mode: "login", authType: "oauth", machineId })),
-      ignoreParseFailure(sessionsApi.saveApiKey("openai", "key", machineId)),
-      ignoreParseFailure(sessionsApi.startInteractiveApiKeyLogin("amazon-bedrock", machineId)),
-      ignoreParseFailure(sessionsApi.logoutProvider("openai", machineId)),
-      ignoreParseFailure(sessionsApi.startOAuthLogin("openai", machineId)),
-      ignoreParseFailure(sessionsApi.oauthFlow("flow 1", machineId)),
-      ignoreParseFailure(sessionsApi.respondOAuthFlow("flow 1", "req 1", "code", machineId)),
-      ignoreParseFailure(sessionsApi.cancelOAuthFlow("flow 1", machineId)),
       ignoreParseFailure(terminalsApi.terminals("p 1", "w 1", machineId)),
       ignoreParseFailure(terminalsApi.startTerminal("p 1", "w 1", { cols: 120, rows: 40 }, machineId)),
       ignoreParseFailure(terminalsApi.closeWorkspaceTerminals("p 1", "w 1", machineId)),
@@ -392,20 +372,12 @@ describe("federated route contract", () => {
       ignoreParseFailure(terminalsApi.cancelCommandRun("run 1", machineId)),
     ]);
 
-    expect(fetchMock.mock.calls.map(([url]) => toUrl(url).pathname)).toContain(
-      `/nested/pi-webui/api/machines/${encodeURIComponent(machineId)}/sessions/${encodeURIComponent(session.id)}/reorder`,
-    );
-
     const observedRoutes = uniqueHttpRoutes([
       ...fetchMock.mock.calls.map((call) => fetchCallToRoute(call, machineId)),
       routeFromMachineUrl("GET", workspaceImagePreviewUrl("p 1", "w 1", "diagram.svg", { machineId, modifiedAt: "2026-05-25T00:00:00.000Z" }), machineId),
     ]);
     const unmatched = observedRoutes.filter((route) => !matchesHttpRoute(route, FEDERATED_HTTP_ROUTES));
 
-    expect(observedRoutes).toContainEqual({
-      method: "POST",
-      path: `/sessions/${encodeURIComponent(session.id)}/reorder`,
-    });
     const workspaceTaskRoutes = observedRoutes.filter((route) => route.path.includes("workspace-tasks"));
     expect(workspaceTaskRoutes).toEqual([
       { method: "GET", path: "/projects/p%201/workspaces/w%201/workspace-tasks" },
