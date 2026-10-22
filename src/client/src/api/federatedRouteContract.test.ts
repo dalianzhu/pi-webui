@@ -1,29 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { SessionRef, Workspace } from "../../../shared/apiTypes";
+import type { SessionRef } from "../../../shared/apiTypes";
 import { FEDERATED_HTTP_ROUTES, FEDERATED_WEBSOCKET_ROUTES, SESSION_TREE_NAVIGATION_PROXY_TIMEOUT_MS, type FederatedHttpRouteSpec } from "../../../shared/federatedRoutes";
 import { resolveAppUrl } from "../appUrl";
 import { activityApi, configApi, filesApi, gitApi, learnedSkillsApi, memoryApi, modelsConfigApi, piPackagePluginsApi, piPackagesApi, piWebUiApi, pluginsApi, projectsApi, sessionsApi, skillsConfigApi, terminalsApi, workspacesApi } from "./clients";
-import { FEDERATED_ROUTE_SCENARIOS, GATEWAY_ADDRESSED_METHODS, MACHINE_SCOPED_CLIENT_APIS, sessionsScenarios, type Fixture, type ScenarioTable } from "./federatedRouteScenarios.testSupport";
+import { FEDERATED_ROUTE_SCENARIOS, GATEWAY_ADDRESSED_METHODS, MACHINE_SCOPED_CLIENT_APIS, activityScenarios, filesScenarios, gitScenarios, projectsScenarios, sessionsScenarios, terminalsScenarios, workspace, workspaceTasksScenarios, workspacesScenarios, type Fixture, type ScenarioTable } from "./federatedRouteScenarios.testSupport";
 import { globalSessionEvents, realtimeEvents, sessionEvents, terminalSocket } from "./sockets";
 import { workspaceImagePreviewUrl } from "./urls";
 import { workspaceTasksApi } from "./workspaceTasksApi";
 
 const machineId = "remote-a";
-const workspace: Workspace = {
-  id: "w 1",
-  projectId: "p 1",
-  path: "/repo",
-  label: "repo",
-  isMain: true,
-  isGitRepo: true,
-  isGitWorktree: true,
-};
 const session = { id: "s 1", cwd: workspace.path };
-const workspaceTask = { id: "build", title: "Build", command: "npm run build", confirm: false };
-const workspaceTasksConfig = {
-  version: 1 as const,
-  tasks: [workspaceTask],
-};
 const pinResponseBody = {
   id: "s 1",
   path: "/repo/session.jsonl",
@@ -38,19 +24,6 @@ const unpinResponseBody = { ...pinResponseBody, pinned: false };
 const pinnedSessionResponseBodies: Readonly<Record<string, unknown>> = {
   "sessionsApi.pin": pinResponseBody,
   "sessionsApi.unpin": unpinResponseBody,
-};
-const workspaceTaskMove = {
-  operationId: "00000000-0000-4000-8000-000000000001",
-  intent: "start" as const,
-  source: {
-    ref: { scope: "workspace" as const, id: "build" },
-    expectedCatalog: { kind: "loaded" as const, revision: "workspace-revision", config: workspaceTasksConfig },
-  },
-  destination: {
-    scope: "global" as const,
-    expectedCatalog: { kind: "loaded" as const, revision: "global-revision", config: { version: 1 as const, tasks: [] } },
-    task: workspaceTask,
-  },
 };
 
 beforeEach(() => {
@@ -303,6 +276,75 @@ describe("federated route contract", () => {
     ]);
   });
 
+  it("runs the staged workspace and project client API scenarios through the sequential runner", async () => {
+    vi.stubEnv("BASE_URL", "./");
+    vi.stubGlobal("document", { baseURI: "https://pi.example.test/nested/pi-webui/" });
+
+    expect(MACHINE_SCOPED_CLIENT_APIS.projectsApi).toBe(projectsApi);
+    expect(MACHINE_SCOPED_CLIENT_APIS.workspacesApi).toBe(workspacesApi);
+    expect(MACHINE_SCOPED_CLIENT_APIS.terminalsApi).toBe(terminalsApi);
+    expect(MACHINE_SCOPED_CLIENT_APIS.filesApi).toBe(filesApi);
+    expect(MACHINE_SCOPED_CLIENT_APIS.gitApi).toBe(gitApi);
+    expect(MACHINE_SCOPED_CLIENT_APIS.activityApi).toBe(activityApi);
+    expect(MACHINE_SCOPED_CLIENT_APIS.workspaceTasksApi).toBe(workspaceTasksApi);
+    expect(FEDERATED_ROUTE_SCENARIOS.projectsApi).toBe(projectsScenarios);
+    expect(FEDERATED_ROUTE_SCENARIOS.workspacesApi).toBe(workspacesScenarios);
+    expect(FEDERATED_ROUTE_SCENARIOS.terminalsApi).toBe(terminalsScenarios);
+    expect(FEDERATED_ROUTE_SCENARIOS.filesApi).toBe(filesScenarios);
+    expect(FEDERATED_ROUTE_SCENARIOS.gitApi).toBe(gitScenarios);
+    expect(FEDERATED_ROUTE_SCENARIOS.activityApi).toBe(activityScenarios);
+    expect(FEDERATED_ROUTE_SCENARIOS.workspaceTasksApi).toBe(workspaceTasksScenarios);
+    expect(Object.keys(projectsScenarios)).toHaveLength(9);
+    expect(Object.keys(workspacesScenarios)).toHaveLength(7);
+    expect(Object.keys(terminalsScenarios)).toHaveLength(9);
+    expect(Object.keys(gitScenarios)).toHaveLength(2);
+    expect(Object.keys(activityScenarios)).toHaveLength(1);
+    expect(Object.keys(workspaceTasksScenarios)).toHaveLength(5);
+    // Both file rows are separate route shapes behind one method; count fixtures, not method keys,
+    // so a dropped branch fails here instead of passing on a nonempty table.
+    expect(filesScenarios.files.map((fixture) => `${fixture.route.method} ${fixture.route.path}`)).toEqual([
+      "GET /files",
+      "GET /projects/:projectId/workspaces/:workspaceId/files",
+    ]);
+    const routeRowCount = [
+      ...Object.values(projectsScenarios),
+      ...Object.values(workspacesScenarios),
+      ...Object.values(terminalsScenarios),
+      ...Object.values(filesScenarios),
+      ...Object.values(gitScenarios),
+      ...Object.values(activityScenarios),
+      ...Object.values(workspaceTasksScenarios),
+    ].reduce((total, fixtures) => total + fixtures.length, 0);
+    expect(routeRowCount).toBe(35);
+
+    await runFederatedRouteScenarios({
+      apis: {
+        projectsApi: MACHINE_SCOPED_CLIENT_APIS.projectsApi,
+        workspacesApi: MACHINE_SCOPED_CLIENT_APIS.workspacesApi,
+        terminalsApi: MACHINE_SCOPED_CLIENT_APIS.terminalsApi,
+        filesApi: MACHINE_SCOPED_CLIENT_APIS.filesApi,
+        gitApi: MACHINE_SCOPED_CLIENT_APIS.gitApi,
+        activityApi: MACHINE_SCOPED_CLIENT_APIS.activityApi,
+        workspaceTasksApi: MACHINE_SCOPED_CLIENT_APIS.workspaceTasksApi,
+      },
+      scenarios: {
+        projectsApi: FEDERATED_ROUTE_SCENARIOS.projectsApi,
+        workspacesApi: FEDERATED_ROUTE_SCENARIOS.workspacesApi,
+        terminalsApi: FEDERATED_ROUTE_SCENARIOS.terminalsApi,
+        filesApi: FEDERATED_ROUTE_SCENARIOS.filesApi,
+        gitApi: FEDERATED_ROUTE_SCENARIOS.gitApi,
+        activityApi: FEDERATED_ROUTE_SCENARIOS.activityApi,
+        workspaceTasksApi: FEDERATED_ROUTE_SCENARIOS.workspaceTasksApi,
+      },
+      gatewayAddresses: GATEWAY_ADDRESSED_METHODS,
+      machineId,
+    });
+
+    // One transport per declared row: a row the runner skipped, or a method that stopped issuing a
+    // request, changes this count instead of passing on the table's own shape.
+    expect(vi.mocked(fetch).mock.calls).toHaveLength(35);
+  });
+
   it("matches route patterns by strict segments without collapsing or decoding", () => {
     const pattern = "/sessions/:sessionId/pin";
     expect(strictPathMatches("/sessions/s%201/pin", pattern)).toBe(true);
@@ -338,38 +380,6 @@ describe("federated route contract", () => {
       ignoreParseFailure(piPackagesApi.install("npm:@acme/tools", machineId)),
       ignoreParseFailure(piPackagesApi.remove("npm:@acme/tools", "user", machineId)),
       ignoreParseFailure(piPackagesApi.update("npm:@acme/tools", machineId)),
-      ignoreParseFailure(activityApi.workspaceActivity(machineId)),
-      ignoreParseFailure(projectsApi.projects(machineId)),
-      ignoreParseFailure(projectsApi.addProject("/repo", "Repo", false, machineId)),
-      ignoreParseFailure(projectsApi.closeProject("p 1", machineId)),
-      ignoreParseFailure(projectsApi.pinProject("p 1", machineId)),
-      ignoreParseFailure(projectsApi.unpinProject("p 1", machineId)),
-      ignoreParseFailure(projectsApi.projectDirectories("/r", machineId)),
-      ignoreParseFailure(workspacesApi.workspaces("p 1", machineId)),
-      ignoreParseFailure(workspacesApi.deleteWorkspace("p 1", "w 1", machineId)),
-      ignoreParseFailure(workspacesApi.workspaceTree("p 1", "w 1", "src", machineId)),
-      ignoreParseFailure(workspacesApi.workspaceFile("p 1", "w 1", "README.md", machineId)),
-      ignoreParseFailure(workspacesApi.writeWorkspaceFile("p 1", "w 1", "README.md", "hello", { overwrite: false }, machineId)),
-      ignoreParseFailure(workspacesApi.deleteWorkspaceFile("p 1", "w 1", "README.md", machineId)),
-      ignoreParseFailure(workspacesApi.moveWorkspaceFile("p 1", "w 1", "README.md", "docs/README.md", { overwrite: false }, machineId)),
-      ignoreParseFailure(workspaceTasksApi.readWorkspace({ projectId: "p 1", workspaceId: "w 1", machineId })),
-      ignoreParseFailure(workspaceTasksApi.replaceWorkspace({ projectId: "p 1", workspaceId: "w 1", machineId, expectedRevision: "workspace-revision", config: workspaceTasksConfig })),
-      ignoreParseFailure(workspaceTasksApi.move({ projectId: "p 1", workspaceId: "w 1", machineId, ...workspaceTaskMove })),
-      ignoreParseFailure(workspaceTasksApi.readGlobal(machineId)),
-      ignoreParseFailure(workspaceTasksApi.replaceGlobal({ machineId, expectedRevision: "global-revision", config: workspaceTasksConfig })),
-      ignoreParseFailure(filesApi.files("/repo", "README", { kind: "tracked", mode: "file", machineId })),
-      ignoreParseFailure(filesApi.files("/repo", "README", { kind: "tracked", mode: "file", projectId: "p 1", workspaceId: "w 1", machineId, workspaceScoped: true })),
-      ignoreParseFailure(gitApi.gitStatus("p 1", "w 1", machineId)),
-      ignoreParseFailure(gitApi.gitDiff("p 1", "w 1", { path: "README.md", staged: true }, machineId)),
-      ignoreParseFailure(terminalsApi.terminals("p 1", "w 1", machineId)),
-      ignoreParseFailure(terminalsApi.startTerminal("p 1", "w 1", { cols: 120, rows: 40 }, machineId)),
-      ignoreParseFailure(terminalsApi.closeWorkspaceTerminals("p 1", "w 1", machineId)),
-      ignoreParseFailure(terminalsApi.closeTerminal("p 1", "w 1", "t 1", machineId)),
-      ignoreParseFailure(terminalsApi.continueTerminal("p 1", "w 1", "t 1", machineId)),
-      ignoreParseFailure(terminalsApi.runTerminalCommand("core", { workspace, title: "Build", command: "npm test" }, machineId)),
-      ignoreParseFailure(terminalsApi.listCommandRuns({ projectId: "p 1", workspaceId: "w 1", statuses: ["running"], metadata: { "pi.operation": "test" } }, machineId)),
-      ignoreParseFailure(terminalsApi.getCommandRun("run 1", machineId)),
-      ignoreParseFailure(terminalsApi.cancelCommandRun("run 1", machineId)),
     ]);
 
     const observedRoutes = uniqueHttpRoutes([
@@ -378,17 +388,6 @@ describe("federated route contract", () => {
     ]);
     const unmatched = observedRoutes.filter((route) => !matchesHttpRoute(route, FEDERATED_HTTP_ROUTES));
 
-    const workspaceTaskRoutes = observedRoutes.filter((route) => route.path.includes("workspace-tasks"));
-    expect(workspaceTaskRoutes).toEqual([
-      { method: "GET", path: "/projects/p%201/workspaces/w%201/workspace-tasks" },
-      { method: "PUT", path: "/projects/p%201/workspaces/w%201/workspace-tasks" },
-      { method: "POST", path: "/projects/p%201/workspaces/w%201/workspace-tasks/move" },
-      { method: "GET", path: "/workspace-tasks/global" },
-      { method: "PUT", path: "/workspace-tasks/global" },
-    ]);
-    for (const route of workspaceTaskRoutes) {
-      expect(FEDERATED_HTTP_ROUTES.filter((spec) => spec.method === route.method && pathMatchesPattern(route.path, spec.path))).toHaveLength(1);
-    }
     expect(unmatched).toEqual([]);
   });
 
