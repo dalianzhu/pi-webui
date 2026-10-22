@@ -34,7 +34,8 @@ export function mergeCachedNewSessions(cwd: string, sessions: SessionInfo[], mac
   const sessionIds = new Set(sessions.map((session) => session.id));
   // Modern catalogs also contain live, memory-only starts. Seeing one is not
   // proof of persistence: keep its recovery cache, but do not duplicate its row.
-  const persistedIds = new Set(sessions.filter((session) => session.persisted !== false || session.archived === true || session.messageCount > 0).map((session) => session.id));
+  // Shell-only history can have messages without a file; explicit false wins.
+  const persistedIds = new Set(sessions.filter((session) => session.persisted !== false || session.archived === true).map((session) => session.id));
   const cachedSessions = loadCachedNewSessions(storage);
   const retainedCachedSessions = cachedSessions.filter((session) => session.machineId !== machineId || !persistedIds.has(session.id));
   if (retainedCachedSessions.length !== cachedSessions.length) saveCachedNewSessions(retainedCachedSessions, storage);

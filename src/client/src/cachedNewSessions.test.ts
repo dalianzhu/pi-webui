@@ -76,13 +76,14 @@ describe("cached new sessions", () => {
     expect(loadCachedNewSessions(storage).map((session) => session.id)).toEqual(["other"]);
   });
 
-  it("keeps genuinely transient recovery records without duplicating live catalog rows", () => {
+  it.each([0, 1])("keeps transient recovery without duplicate rows even with %s shell-only messages", (messageCount) => {
     const storage = new MemoryStorage();
     const transient = { ...baseSession, persisted: false };
     rememberCachedNewSession(transient, "local", storage);
-    expect(mergeCachedNewSessions("/repo", [transient], "local", storage)).toEqual([transient]);
+    const reported = { ...transient, messageCount };
+    expect(mergeCachedNewSessions("/repo", [reported], "local", storage)).toEqual([reported]);
     expect(loadCachedNewSessions(storage)).toHaveLength(1);
-    mergeCachedNewSessions("/repo", [{ ...transient, persisted: true }], "local", storage);
+    mergeCachedNewSessions("/repo", [{ ...reported, persisted: true }], "local", storage);
     expect(loadCachedNewSessions(storage)).toEqual([]);
   });
 

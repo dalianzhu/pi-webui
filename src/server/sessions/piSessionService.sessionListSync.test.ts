@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -44,14 +45,90 @@ describe("session list synchronization across the SDK persistence boundary", () 
     expect(observer.state.projectSessions).toEqual([created]);
     expect(loadCachedNewSessions()).toEqual([]);
 
-    // This is live membership, not a permanent client-side keep-alive cache.
+    // Only an emitted invalidation may trigger the observer's next read.
+    const beforeStop = f.hub.globalEvents.length;
     await f.service.stop({ id: created.id, cwd: f.root });
-    await refresh(observer.workspaces, [f.root]);
+    const invalidations = f.hub.globalEvents.slice(beforeStop).filter((event) => event.type === "sessions.changed");
+    expect(invalidations).toEqual([{ type: "sessions.changed", cwd: f.root }]);
+    for (const event of invalidations) await refresh(observer.workspaces, [event.cwd]);
     expect(observer.state.sessions).toEqual([]);
     expect(observer.state.projectSessions).toEqual([]);
   });
 
-  it("retires cached-new identity after the first accepted write, so reconnect cannot resurrect deleted history", async () => {
+  it("invalidates removed memory-only membership even when runtime teardown fails", async () => {
+    const f = await fixture();
+    const created = await f.service.start(f.root);
+    vi.spyOn(f.runtime, "dispose").mockRejectedValueOnce(new Error("teardown failed"));
+    const beforeStop = f.hub.globalEvents.length;
+    await expect(f.service.stop({ id: created.id, cwd: f.root })).rejects.toThrow("teardown failed");
+    expect(f.hub.globalEvents.slice(beforeStop)).toContainEqual({ type: "sessions.changed", cwd: f.root });
+    expect(await f.service.list(f.root)).toEqual([]);
+  });
+
+  it("notifies after final teardown writes so the next catalog read sees durable history", async () => {
+    const f = await fixture();
+    const created = await f.service.start(f.root);
+    const filePresentAtInvalidation: boolean[] = [];
+    const publish = f.hub.publishGlobal.bind(f.hub);
+    vi.spyOn(f.hub, "publishGlobal").mockImplementation((event) => {
+      publish(event);
+      if (event.type === "sessions.changed") filePresentAtInvalidation.push(existsSync(created.path));
+    });
+    vi.spyOn(f.runtime, "dispose").mockImplementationOnce(() => {
+      f.manager.appendMessage({ role: "user", content: "final durable write", timestamp: Date.now() });
+      return Promise.resolve();
+    });
+    await f.service.stop({ id: created.id, cwd: f.root });
+    expect(filePresentAtInvalidation).toEqual([true]);
+    expect((await f.service.list(f.root)).map((session) => session.id)).toEqual([created.id]);
+  });
+
+  it("does not invalidate history when stopping a runtime whose file has become durable", async () => {
+    const f = await fixture();
+    const created = await f.service.start(f.root);
+    f.manager.appendMessage({ role: "user", content: "durable history", timestamp: Date.now() });
+    expect(await SessionManager.list(f.root, f.sessionsDir)).toHaveLength(1);
+    // Do not read the service catalog first: its transient registry has not yet
+    // observed the new file, but closing this runtime still removes no history.
+    const beforeStop = f.hub.globalEvents.length;
+    await f.service.stop({ id: created.id, cwd: f.root });
+    expect(f.hub.globalEvents.slice(beforeStop).filter((event) => event.type === "sessions.changed")).toEqual([]);
+    expect((await f.service.list(f.root)).map((session) => session.id)).toEqual([created.id]);
+  });
+
+  it.each(["!true", "!!true"])("preserves recovery when the bundled SDK accepts %s without writing a session file", async (command) => {
+    vi.stubGlobal("localStorage", new MemoryStorage());
+    const f = await fixture(true);
+    const created = await f.service.start(f.root);
+    const ended = deferred<undefined>();
+    const publish = f.hub.publish.bind(f.hub);
+    vi.spyOn(f.hub, "publish").mockImplementation((id, event) => {
+      publish(id, event);
+      if (event.type === "shell.end") ended.resolve(undefined);
+    });
+    const creator = f.client(undefined, { shell: async (ref, text) => { await f.service.shell(ref, text); return { accepted: true }; } });
+    rememberCachedNewSession(created);
+    const cached = markCachedNewSessionInfo(created);
+    Object.assign(creator.state, { sessions: [cached], projectSessions: [cached], selectedSession: cached });
+    expect(await creator.sessions.send(command)).toBe(true);
+    await ended.promise;
+    expect(await SessionManager.list(f.root, f.sessionsDir)).toEqual([]);
+    expect((await f.service.status({ id: created.id, cwd: f.root })).persisted).toBe(false);
+    expect(loadCachedNewSessions().map((session) => session.id)).toEqual([created.id]);
+    const catalog = await f.service.list(f.root);
+    expect(catalog[0]).toMatchObject({ persisted: false, messageCount: 1 });
+    await creator.sessions.applyRefreshedSessionLists([{ cwd: f.root, sessions: catalog }], "local");
+    expect(loadCachedNewSessions().map((session) => session.id)).toEqual([created.id]);
+
+    // Losing the runtime (as in a daemon restart) must not erase the only
+    // recovery record just because shell acceptance was reported as success.
+    await f.service.stop({ id: created.id, cwd: f.root });
+    await creator.sessions.applyRefreshedSessionLists([{ cwd: f.root, sessions: [] }], "local");
+    expect(creator.state.sessions.map((session) => session.id)).toEqual([created.id]);
+    expect(loadCachedNewSessions().map((session) => session.id)).toEqual([created.id]);
+  });
+
+  it("retires cached-new identity after a write is confirmed durable, so reconnect cannot resurrect deleted history", async () => {
     vi.stubGlobal("localStorage", new MemoryStorage());
     const f = await fixture();
     const created = await f.service.start(f.root);
@@ -297,20 +374,23 @@ describe("session list synchronization across the SDK persistence boundary", () 
   });
 });
 
-async function fixture() {
+async function fixture(realSdkRuntime = false) {
   const root = await mkdtemp(join(tmpdir(), "pi-webui-session-list-sync-"));
   const sessionsDir = join(root, "sessions");
   const manager = SessionManager.create(root, sessionsDir);
   const fake = fakeRuntime(manager.getSessionId(), { sessionFile: manager.getSessionFile(), sessionManager: manager });
+  const sdkServices = { ...fakeAgentSessionServices(), cwd: root };
+  const sdk = realSdkRuntime ? await createAgentSessionFromServices({ services: sdkServices, sessionManager: manager, model: testModel() }) : undefined;
+  const runtime = sdk === undefined ? fake.runtime : new AgentSessionRuntime(sdk.session, sdkServices, () => Promise.reject(new Error("Shell fixture must not recreate its runtime")));
   const hub = new CapturingSessionEventHub();
   const service = new PiSessionService(hub, {
     agentDir: join(root, "agent"), modelRuntime: testModelRuntime,
     archiveStore: new SessionArchiveStore(join(root, "archive.json"), join(root, "archive")),
-    createAgentRuntime: runtimeCreator(fake.runtime),
+    createAgentRuntime: runtimeCreator(runtime),
     sessionManager: { create: () => manager, open: () => manager, list: () => SessionManager.list(root, sessionsDir) },
     heartbeatIntervalMs: 60_000,
   });
-  return { root, sessionsDir, manager, hub, service, ...registerFixture(root, service) };
+  return { root, sessionsDir, manager, runtime, hub, service, ...registerFixture(root, service) };
 }
 
 async function forkFixture(includeSecondUser = true) {
@@ -377,7 +457,7 @@ function clientForService(root: string, service: PiSessionService, prompt?: type
   let sessionListRefresh = Promise.resolve();
   const sessionListRefreshRequested = deferred<undefined>();
   const sessions: SessionController = new SessionController(() => state, setState, () => undefined, undefined, {
-    socket: new FakeSocket(), api: { ...api, ...overrides, ...(prompt === undefined ? {} : { prompt }) },
+    socket: new FakeSocket(), api: { ...api, status: (ref) => service.status(ref), ...overrides, ...(prompt === undefined ? {} : { prompt }) },
     refreshSessionLists: (cwds, machineId) => {
       sessionListRefresh = workspaces.refreshSessionLists(cwds, machineId);
       sessionListRefreshRequested.resolve(undefined);

@@ -4358,26 +4358,34 @@ export class PiSessionService implements SessionRouteService {
     if (!active) return;
     this.forgetUnreadActivity(active.runtime.session);
     this.active.delete(sessionId);
+    const transient = this.transientCreatedSessions.get(sessionId);
+    const removedMemoryOnly = transient !== undefined && !sessionFileExists(active.runtime.session.sessionFile);
     this.transientCreatedSessions.delete(sessionId);
-    this.activities.delete(sessionId);
-    this.workspaceActivity?.removeSession(
-      sessionId,
-      active.runtime.session.sessionManager.getCwd()
-    );
-    this.clearAuthLossWarningsForSession(sessionId);
-    this.clearCompactionPromptQueue(sessionId);
-    // Disarm subsession notification before teardown so the abort below cannot
-    // emit a "stopped working" event that notifies the parent (e.g. on archive).
-    // The parent/children link is kept so the parent can still see the child.
-    if (this.subsessionLinkForActiveChild(active.runtime.session) !== undefined)
-      this.subsessionNotifyArmed.delete(sessionId);
-    clearSessionQueue(active.runtime.session);
-    active.unsubscribe();
-    active.runtime.setRebindSession(undefined);
     try {
-      await this.abortSessionOperations(active.runtime.session);
+      this.activities.delete(sessionId);
+      this.workspaceActivity?.removeSession(
+        sessionId,
+        active.runtime.session.sessionManager.getCwd()
+      );
+      this.clearAuthLossWarningsForSession(sessionId);
+      this.clearCompactionPromptQueue(sessionId);
+      // Disarm subsession notification before teardown so the abort below cannot
+      // emit a "stopped working" event that notifies the parent (e.g. on archive).
+      // The parent/children link is kept so the parent can still see the child.
+      if (this.subsessionLinkForActiveChild(active.runtime.session) !== undefined)
+        this.subsessionNotifyArmed.delete(sessionId);
+      clearSessionQueue(active.runtime.session);
+      active.unsubscribe();
+      active.runtime.setRebindSession(undefined);
+      try {
+        await this.abortSessionOperations(active.runtime.session);
+      } finally {
+        await active.runtime.dispose();
+      }
     } finally {
-      await active.runtime.dispose();
+      // Removing published memory-only membership changes the catalog even if
+      // teardown fails. Notify after teardown so any final SDK writes are visible.
+      if (removedMemoryOnly) this.publishSessionsChanged([transient.cwd]);
     }
   }
 

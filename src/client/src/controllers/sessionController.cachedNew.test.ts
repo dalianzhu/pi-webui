@@ -23,7 +23,7 @@ describe("SessionController cached-new sessions", () => {
     );
 
     const send = controller.send("hello");
-    controller.applyGlobalEvent({ type: "status.update", status: { ...status(oldSession.id), messageCount: 1 } });
+    controller.applyGlobalEvent({ type: "status.update", status: { ...status(oldSession.id), persisted: true, messageCount: 1 } });
     controller.flushPendingUpdates();
     resolvePrompt?.();
     await send;

@@ -782,7 +782,7 @@ export class SessionController {
       } else {
         await this.api.prompt(session, text, streamingBehavior, machineId, attachments);
       }
-      this.markCachedNewSessionPersisted(session, machineId);
+      await this.refreshCachedNewSessionPersistence(session, machineId);
       return true;
     } catch (error) {
       this.setState({ error: String(error) });
@@ -798,7 +798,7 @@ export class SessionController {
     }
     try {
       await this.api.shell(session, text, machineId);
-      this.markCachedNewSessionPersisted(session, machineId);
+      await this.refreshCachedNewSessionPersistence(session, machineId);
       return true;
     } catch (error) {
       if (this.getState().selectedSession?.id === session.id) this.setState({ messages: [...this.getState().messages, textMessage("system", String(error))] });
@@ -1181,7 +1181,13 @@ export class SessionController {
     if (selected === undefined || !byCwd.has(selected.cwd)) return;
     const refreshed = byCwd.get(selected.cwd)?.find((session) => session.id === selected.id);
     if (refreshed !== undefined) {
-      this.setState({ selectedSession: refreshed });
+      if ((selected.archived === true) !== (refreshed.archived === true)) {
+        // Archive state changes switch between history-only and live selection.
+        // Rejoin (or close) the stream rather than only replacing row metadata.
+        await this.selectSession(refreshed);
+      } else {
+        this.setState({ selectedSession: refreshed });
+      }
       return;
     }
     const next = sessions.find((session) => session.archived !== true) ?? sessions[0];
@@ -2193,13 +2199,23 @@ export class SessionController {
     return markCachedNewSessionInfo(session, machineId);
   }
 
-  private markCachedNewSessionPersisted(session: SessionInfo, machineId: string): void {
-    // Acknowledged writes must retire the durable recovery record as well as
-    // its UI marker, or a later authoritative empty list can resurrect history.
-    forgetCachedNewSession(session.id, machineId);
-    if (selectedMachineId(this.getState()) !== machineId) return;
-    const latest = this.getState().sessions.find((candidate) => candidate.id === session.id) ?? session;
-    if (isCachedNewSessionInfo(latest)) this.replaceSession(stripCachedNewSessionMarker(latest));
+  private async refreshCachedNewSessionPersistence(session: SessionInfo, machineId: string): Promise<void> {
+    // Prompt/shell acceptance is not a durable write: e.g. !!true can finish
+    // without creating an SDK session file. Retire recovery only on evidence.
+    if (session.persisted !== true && !this.persistedSessionIdentities.has(machineSessionKey(machineId, session.id))) {
+      try {
+        const status = await this.api.status(session, machineId);
+        if (status.sessionId !== session.id || status.persisted !== true) return;
+      } catch {
+        // The send succeeded. A failed persistence probe must neither turn it
+        // into a failed send nor discard its still-unconfirmed recovery record.
+        return;
+      }
+    }
+    this.confirmSessionPersisted(session.id, machineId);
+    if (this.disposed || selectedMachineId(this.getState()) !== machineId) return;
+    // Apply only persistence, not an older probe's message count or live status.
+    this.setState(sessionStatusListPatch(this.getState(), { sessionId: session.id, persisted: true }));
   }
 
   private applyCommandResult(result: CommandResult, machineId: string) {
@@ -2744,7 +2760,7 @@ function sessionOrderEntryKey(entry: SessionOrderReference): string {
   return JSON.stringify([entry.cwd, entry.id]);
 }
 
-function sessionStatusListPatch(state: AppState, status: SessionStatus): Pick<Partial<AppState>, "sessions" | "projectSessions" | "selectedSession"> {
+function sessionStatusListPatch(state: AppState, status: Pick<SessionStatus, "sessionId" | "messageCount" | "persisted">): Pick<Partial<AppState>, "sessions" | "projectSessions" | "selectedSession"> {
   const changes = (session: SessionInfo) => session.id === status.sessionId && (
     (status.messageCount !== undefined && session.messageCount !== status.messageCount)
     || (status.persisted !== undefined && session.persisted !== status.persisted)
