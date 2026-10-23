@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.27.3
+
+### Patch Changes
+
+- 2936946: Fix remote session pinning and unpinning, Force Cleanup, and project usage statistics failing with "API route not found".
+
 ## 1.27.2
 
 ### Patch Changes
