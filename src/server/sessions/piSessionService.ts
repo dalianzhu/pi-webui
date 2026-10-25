@@ -5271,6 +5271,12 @@ export class PiSessionService implements SessionRouteService {
     name: string | undefined
   ): void {
     if (name === undefined || session.sessionName !== undefined) return;
+    // Title generation is an out-of-band request that can resolve long after the
+    // session was closed (archive, restore, reload, discard). Naming a closed
+    // session appends a session_info entry to a session file that pi-webui may
+    // have just removed; the SDK's append recreates that path as a headerless
+    // one-line file that nothing can parse afterwards.
+    if (!this.isCurrentActiveSession(session)) return;
     if (this.treeNavigations.has(session)) {
       this.deferredGeneratedSessionNames.set(session, name);
       return;

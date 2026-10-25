@@ -311,6 +311,72 @@ describe("PiSessionService prompt, queue, and auth warnings", () => {
     await service.dispose();
   });
 
+  it("applies a late generated title while the session is still active", async () => {
+    const activeModel = testModel();
+    const title = deferredTitleStream(activeModel.id);
+    const streamFn = vi.fn<StreamFn>(() => title.stream);
+    const fake = fakeRuntime("deferred-title-session", { model: activeModel, agent: { streamFunction: streamFn } });
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
+      utilityModelResolver: utilityResolverFor([]),
+      createAgentRuntime: runtimeCreator(fake.runtime),
+      sessionManager: sessionGateway([sessionRecord("deferred-title-session")]),
+      heartbeatIntervalMs: 60_000,
+    });
+
+    await service.prompt(sessionRef("deferred-title-session"), "Please fix the login bug");
+    await vi.waitFor(() => { expect(streamFn).toHaveBeenCalledOnce(); });
+    expect(fake.session.sessionName).toBeUndefined();
+
+    title.complete("Deferred title");
+    await flushPendingMicrotasks();
+
+    expect(fake.session.sessionName).toBe("Deferred title");
+    await service.dispose();
+  });
+
+  it("does not apply a late generated title to an archived session", async () => {
+    const activeModel = testModel();
+    const title = deferredTitleStream(activeModel.id);
+    const streamFn = vi.fn<StreamFn>(() => title.stream);
+    const archivedInputs: string[] = [];
+    const fake = fakeRuntime("late-title-session", { model: activeModel, agent: { streamFunction: streamFn } });
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
+      utilityModelResolver: utilityResolverFor([]),
+      createAgentRuntime: runtimeCreator(fake.runtime),
+      archiveStore: {
+        list: () => Promise.resolve([]),
+        get: () => Promise.resolve(undefined),
+        archive: (input) => {
+          archivedInputs.push(input.sessionId);
+          return Promise.resolve({ sessionId: input.sessionId, cwd: input.cwd, archivedAt: "2026-01-03T00:00:00.000Z" });
+        },
+        restore: () => Promise.resolve(),
+        isArchived: () => Promise.resolve(false),
+      },
+      sessionManager: sessionGateway([sessionRecord("late-title-session")]),
+      heartbeatIntervalMs: 60_000,
+    });
+
+    await service.prompt(sessionRef("late-title-session"), "Please fix the login bug");
+    await vi.waitFor(() => { expect(streamFn).toHaveBeenCalledOnce(); });
+    await service.archive(sessionRef("late-title-session"));
+    expect(archivedInputs).toEqual(["late-title-session"]);
+    const nameWrites = vi.spyOn(fake.session, "setSessionName");
+
+    // A late title would append a session_info entry to a file the archive
+    // already removed, and the SDK's append recreates it without a header.
+    title.complete("Archived session title");
+    await flushPendingMicrotasks();
+
+    expect(nameWrites).not.toHaveBeenCalled();
+    expect(fake.session.sessionName).toBeUndefined();
+    await service.dispose();
+  });
+
   it("names relay handoffs deterministically without resolving or calling a model", async () => {
     const resolver = utilityResolverFor([utilityCandidate(testModel(), "minimal")]);
     const streamFn = vi.fn<StreamFn>(() => { throw new Error("title stream should not run"); });
@@ -927,6 +993,24 @@ function runtimeFactoryTreeEvent(): SessionBeforeTreeEvent {
       userWantsSummary: true,
     },
     signal: new AbortController().signal,
+  };
+}
+
+async function flushPendingMicrotasks(): Promise<void> {
+  await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
+  await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
+}
+
+/** A title stream that only finishes when the test completes it explicitly. */
+function deferredTitleStream(modelId: string) {
+  const stream = createAssistantMessageEventStream();
+  return {
+    stream,
+    complete(text: string) {
+      const message = titleAssistantMessage(modelId, { content: [{ type: "text", text }] });
+      stream.push({ type: "done", reason: "stop", message });
+      stream.end(message);
+    },
   };
 }
 
