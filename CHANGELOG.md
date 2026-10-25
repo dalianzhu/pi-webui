@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.28.0
+
+### Minor Changes
+
+- 0463136: Upgrade the supported Pi core and coding agent dependencies to the 1.4.0 series (`^1.4.0` and `>=1.4.0 <2`).
+
 ## 1.27.3
 
 ### Patch Changes
