@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.28.1
+
+### Patch Changes
+
+- e3be3c3: Fix archived sessions sometimes reappearing as unreadable one-line session files when automatic title generation finished after archiving, which could leave permanent session-search errors.
+
 ## 1.28.0
 
 ### Minor Changes
