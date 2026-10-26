@@ -25,7 +25,8 @@ export function repairPtyHelperPermissions(helperPath: string): void {
   }
   let fd: number | undefined;
   try {
-    fd = openSync(helperPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    // A malformed FIFO must reach the type check instead of blocking sessiond.
+    fd = openSync(helperPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const stat = fstatSync(fd);
     if (!stat.isFile()) throw new Error("spawn-helper is not a regular file");
     if ((stat.mode & 0o7000) !== 0) throw new Error("spawn-helper has unexpected special permission bits");
