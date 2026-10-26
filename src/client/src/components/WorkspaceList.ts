@@ -28,6 +28,8 @@ export class WorkspaceList extends LitElement implements KeyboardNavigableSectio
   @state() private openMenuWorkspaceId: string | undefined;
   @state() private menuStyle = "";
 
+  private visibleSelectedWorkspaceId: string | undefined;
+
   private readonly onDocumentClick = (event: Event) => {
     if (isClickWithinActionMenu(event, this.renderRoot)) return;
     this.openMenuWorkspaceId = undefined;
@@ -46,7 +48,13 @@ export class WorkspaceList extends LitElement implements KeyboardNavigableSectio
   protected override updated(changed: PropertyValues<this>): void {
     if (changed.has("workspaces") && this.openMenuWorkspaceId !== undefined && !this.workspaces.some((workspace) => workspace.id === this.openMenuWorkspaceId)) this.openMenuWorkspaceId = undefined;
     if (changed.has("collapsed") && this.collapsed) this.openMenuWorkspaceId = undefined;
-    if ((changed.has("selected") || changed.has("workspaces") || changed.has("collapsed")) && !this.collapsed) this.scrollSelectedIntoView();
+    // Refreshes replace workspace objects without changing the user's selection.
+    // Only reveal a newly selected or newly visible row, not every refreshed list.
+    const visibleSelectedId = !this.collapsed && this.workspaces.some((workspace) => workspace.id === this.selected?.id)
+      ? this.selected?.id
+      : undefined;
+    if (visibleSelectedId !== undefined && visibleSelectedId !== this.visibleSelectedWorkspaceId) this.scrollSelectedIntoView();
+    this.visibleSelectedWorkspaceId = visibleSelectedId;
   }
 
   async focusSelectedOrFirst(): Promise<boolean> {
