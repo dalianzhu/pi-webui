@@ -5,16 +5,56 @@ import type { Workspace } from "../api";
 import { WorkspaceList } from "./WorkspaceList";
 
 const scrollIntoView = vi.fn();
+const resizeObservers: FakeResizeObserver[] = [];
+// jsdom reports no layout for any element. Model the browser here: a reveal can only run
+// while the selected row has layout, which an enclosing hidden panel removes.
+let rowHasLayout = true;
+
+class FakeResizeObserver implements ResizeObserver {
+  private observed = false;
+
+  constructor(private readonly callback: ResizeObserverCallback) {
+    resizeObservers.push(this);
+  }
+
+  observe(): void {
+    this.observed = true;
+  }
+
+  unobserve(): void {
+    this.observed = false;
+  }
+
+  disconnect(): void {
+    this.observed = false;
+  }
+
+  notify(): void {
+    if (this.observed) this.callback([], this);
+  }
+}
+
+function notifyLayout(): void {
+  for (const observer of resizeObservers) observer.notify();
+}
+
+const laidOutRects = [new DOMRect(0, 0, 200, 24)];
 
 beforeEach(() => {
-  // jsdom has no layout; observe the browser scrolling boundary instead.
+  // jsdom has no layout; observe the browser boundaries instead.
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: scrollIntoView });
+  Object.defineProperty(HTMLElement.prototype, "getClientRects", { configurable: true, value: () => (rowHasLayout ? laidOutRects : []) });
+  vi.stubGlobal("ResizeObserver", FakeResizeObserver);
+  rowHasLayout = true;
+  resizeObservers.length = 0;
   scrollIntoView.mockClear();
 });
 
 afterEach(() => {
   document.body.replaceChildren();
   Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+  Reflect.deleteProperty(HTMLElement.prototype, "getClientRects");
+  vi.unstubAllGlobals();
 });
 
 function workspace(id: string): Workspace {
@@ -126,6 +166,32 @@ describe("workspace selection scrolling", () => {
     expect(scrollIntoView).not.toHaveBeenCalled();
     list.selected = { ...first };
     await list.updateComplete;
+    expectSelectedScroll(list);
+  });
+
+  it("waits for layout instead of losing the reveal while an enclosing panel is hidden", async () => {
+    const first = workspace("first");
+    rowHasLayout = false;
+    const list = await mount([first], first);
+    expect(scrollIntoView).not.toHaveBeenCalled();
+
+    rowHasLayout = true;
+    notifyLayout();
+
+    expectSelectedScroll(list);
+  });
+
+  it("keeps the reveal pending for the next refresh without ResizeObserver support", async () => {
+    vi.stubGlobal("ResizeObserver", undefined);
+    const first = workspace("first");
+    rowHasLayout = false;
+    const list = await mount([first], first);
+    expect(scrollIntoView).not.toHaveBeenCalled();
+
+    rowHasLayout = true;
+    list.workspaces = [{ ...first }];
+    await list.updateComplete;
+
     expectSelectedScroll(list);
   });
 });
